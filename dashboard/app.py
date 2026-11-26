@@ -17,7 +17,6 @@ def _():
     import sys
     from pathlib import Path
     from time import perf_counter
-    from collections import defaultdict
     from html import escape
 
     import altair as alt
@@ -72,53 +71,94 @@ def _(metadata, mo, reset_button, source_rows):
     industry_options.update({f"{r['industry']} [{r['industry_code']}]": r["industry_code"] for r in sorted(source_rows, key=lambda r: (r["industry"], r["industry_code"]))})
     industry_filter = mo.ui.dropdown(industry_options, value="전체", label="업종 · 전체 업종 검색", searchable=True, full_width=True)
     band_filter = mo.ui.dropdown(["전체", *metadata["size_bands"]], value="전체", label="사업장 가입자 규모", full_width=True)
+    top_n_filter = mo.ui.slider(start=5, stop=25, step=1, value=12, label="차트에 표시할 업종 수", show_value=True, full_width=True)
     metric_filter = mo.ui.dropdown({"가입자 수": "subscribers", "사업장 수": "workplaces", "당월 고지금액": "billing"}, value="가입자 수", label="차트 비교 지표", full_width=True)
     mo.sidebar(
         mo.vstack([
             mo.Html('<div class="sidebar-brand"><span class="brand-symbol">연금</span><div><strong>국민연금 사업장</strong><small>공공데이터 분석</small></div></div>'),
             mo.md("### 탐색 조건"),
             period_filter, region_filter, status_filter, kind_filter, industry_filter, band_filter,
-            mo.md("---"), metric_filter, reset_button,
+            mo.md("---"), metric_filter, top_n_filter, reset_button,
         ], gap=0.8),
         footer=mo.md("[원본 데이터 ↗](https://www.data.go.kr/data/15083277/fileData.do) · 국민연금공단"),
         width=290,
     )
-    return band_filter, industry_filter, kind_filter, metric_filter, period_filter, region_filter, status_filter
+    return band_filter, industry_filter, kind_filter, metric_filter, period_filter, region_filter, status_filter, top_n_filter
 
 
 @app.cell
-def _(escape, metadata, mo):
+def _(mo, sys):
+    _location = str(mo.notebook_location()).rstrip("/")
+    _editing = _location.endswith("/editor")
+    _prefix = "../" if _editing else "./"
+    if sys.platform != "emscripten":
+        _prefix = "https://corazzon.github.io/nps-marimo-dashboard/"
+    page_links = {
+        "dashboard": _prefix,
+        "editor": _prefix + "editor/",
+        "explorer": _prefix + "explorer/",
+        "source": "public/notebooks/app.py",
+        "editing": _editing,
+    }
+    return (page_links,)
+
+
+@app.cell
+def _(escape, metadata, mo, page_links):
     mo.vstack([
         mo.Html('''<style>
-        :root { --analysis-panel:#fff; --analysis-bg:#f5f7fb; --analysis-text:#17243b; --analysis-muted:#64748b; --analysis-line:#e3e9f2; --analysis-blue:#2563eb; }
+        :root { --analysis-panel:#fff; --analysis-bg:#f4f7fc; --analysis-text:#17243b; --analysis-muted:#64748b; --analysis-line:#e1e8f2; --analysis-blue:#2563eb; }
         html.dark { --analysis-panel:#182234; --analysis-bg:#101827; --analysis-text:#edf2fa; --analysis-muted:#a1b0c4; --analysis-line:#334155; --analysis-blue:#8ab4ff; }
         body { background:var(--analysis-bg); }
-        .analysis-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:4px 0 8px; color:var(--analysis-text); }
-        .analysis-heading h1 { font-size:29px; font-weight:750; margin:0 0 10px; letter-spacing:-.8px; }
-        .analysis-heading p { color:var(--analysis-muted); margin:0; font-size:13px; }
-        .period-badge { background:var(--analysis-panel); border:1px solid var(--analysis-line); border-radius:9px; padding:10px 15px; font-size:13px; white-space:nowrap; }
+        .overview-hero { position:relative; overflow:hidden; padding:27px 30px; border-radius:18px; color:white; background:linear-gradient(115deg,#122441 0%,#173660 62%,#1852a0 100%); display:grid; grid-template-columns:minmax(0,1fr) auto; gap:22px; align-items:center; box-shadow:0 12px 30px #0b27581a; }
+        .overview-hero:before { content:""; position:absolute; width:400px; height:400px; right:-120px; top:-210px; border:1px solid #ffffff18; border-radius:50%; box-shadow:0 0 0 40px #ffffff06,0 0 0 85px #ffffff04; pointer-events:none; }
+        .hero-kicker { display:flex; gap:9px; align-items:center; color:#c5d8f5; font-size:12px; letter-spacing:.2px; margin-bottom:12px; }
+        .hero-kicker span:first-child { background:#ffffff13; border:1px solid #ffffff29; border-radius:20px; padding:4px 9px; color:#e4eeff; }
+        .overview-hero h1 { color:white; font-size:31px; font-weight:780; margin:0 0 9px; letter-spacing:-1px; line-height:1.3; }
+        .hero-subtitle { margin:0; color:#c5d8f5; font-size:13px; line-height:1.7; }
+        .hero-right { position:relative; display:flex; flex-direction:column; align-items:flex-end; gap:13px; }
+        .hero-period { display:flex; gap:14px; align-items:center; }
+        .hero-period span { font-size:11px; color:#b9cce9; }
+        .hero-period strong { color:white; font-size:22px; letter-spacing:.3px; font-variant-numeric:tabular-nums; }
+        .hero-actions { display:flex; flex-wrap:wrap; gap:8px; }
+        .hero-actions a { display:inline-flex; justify-content:center; align-items:center; gap:7px; border-radius:8px; padding:10px 13px; text-decoration:none; font-size:12px; font-weight:650; border:1px solid #ffffff3a; color:#eef4ff; background:#ffffff0b; }
+        .hero-actions a.primary { color:#18355c; background:white; border-color:white; }
+        .hero-actions a:hover { transform:translateY(-1px); box-shadow:0 4px 12px #071a3d20; }
+        .hero-actions a:focus-visible { outline:3px solid #9ac1ff; outline-offset:3px; }
+        .hero-hint { font-size:11px; color:#b9cce9; }
         .sidebar-brand { display:flex; align-items:center; gap:12px; margin:10px 0 22px; color:var(--analysis-text); }
         .brand-symbol { display:grid; place-items:center; border-radius:11px; background:#2563eb; color:white; width:43px; height:43px; font-size:14px; font-weight:750; }
         .sidebar-brand strong { display:block; font-size:17px; letter-spacing:-.4px; }
         .sidebar-brand small { display:block; color:var(--analysis-muted); font-size:12px; margin-top:3px; }
-        .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
-        .metric-card { background:var(--analysis-panel); border:1px solid var(--analysis-line); border-radius:12px; padding:20px; color:var(--analysis-text); min-width:0; }
-        .metric-label { font-size:13px; font-weight:600; color:var(--analysis-muted); margin-bottom:12px; }
-        .metric-value { font-size:27px; line-height:1.3; font-weight:760; letter-spacing:-.7px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-        .metric-value small { font-size:14px; font-weight:500; letter-spacing:0; }
-        .metric-note { color:var(--analysis-muted); font-size:11px; line-height:1.5; margin-top:9px; }
-        .scope-line { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--analysis-muted); font-size:12px; padding:0 1px; }
-        .scope-line b { color:var(--analysis-blue); }
-        .panel-title { color:var(--analysis-text); font-size:17px; font-weight:700; margin:0; letter-spacing:-.4px; }
-        .panel-note { color:var(--analysis-muted); font-size:12px; margin:4px 0 0; line-height:1.6; }
-        .feature-steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
-        .feature-step { padding:16px; border-radius:10px; border:1px solid var(--analysis-line); background:var(--analysis-panel); color:var(--analysis-text); font-size:13px; }
-        .feature-step b { display:block; margin-bottom:7px; }
-        .feature-step p { margin:0; color:var(--analysis-muted); line-height:1.7; }
-        @media(max-width:1100px) { .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .metric-value { font-size:25px; } }
-        @media(max-width:600px) { .analysis-heading { align-items:flex-start; flex-direction:column; } .analysis-heading h1 { font-size:24px; } .metric-grid { gap:8px; } .metric-card { padding:14px; } .metric-value { font-size:21px; } .feature-steps { grid-template-columns:1fr; } }
+        .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:13px; }
+        .metric-card { position:relative; background:var(--analysis-panel); border:1px solid var(--analysis-line); border-radius:13px; padding:19px 19px 16px; color:var(--analysis-text); min-width:0; overflow:hidden; }
+        .metric-card:before { content:""; position:absolute; top:0; left:20px; right:20px; height:3px; background:var(--metric-accent); border-radius:0 0 3px 3px; }
+        .metric-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; }
+        .metric-label { font-size:12px; font-weight:650; color:var(--analysis-muted); }
+        .metric-icon { width:33px; height:33px; display:grid; place-items:center; border-radius:9px; color:var(--metric-accent); background:var(--metric-tint); flex-shrink:0; }
+        .metric-icon svg { width:18px; height:18px; }
+        .metric-value { font-size:28px; line-height:1.25; font-weight:780; letter-spacing:-.8px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+        .metric-value small { font-size:12px; font-weight:500; letter-spacing:0; margin-left:3px; color:var(--analysis-muted); }
+        .metric-note { color:var(--analysis-muted); font-size:11px; line-height:1.6; margin-top:10px; }
+        .metric-progress { display:flex; height:4px; border-radius:8px; overflow:hidden; background:var(--analysis-line); margin-top:12px; }
+        .flow-values { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+        .flow-values div+div { border-left:1px solid var(--analysis-line); padding-left:9px; }
+        .flow-values strong { display:block; font-size:21px; font-weight:750; font-variant-numeric:tabular-nums; letter-spacing:-.6px; }
+        .flow-values span { display:block; color:var(--analysis-muted); font-size:10px; margin-top:5px; }
+        .scope-line { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--analysis-muted); font-size:11px; padding:0 1px; align-items:center; }
+        .scope-chips { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+        .scope-chips b { font-weight:550; color:var(--analysis-blue); border:1px solid var(--analysis-line); border-radius:6px; background:var(--analysis-panel); padding:4px 8px; }
+        .region-summary { display:grid; grid-template-columns:150px minmax(0,1fr); gap:18px; align-items:center; background:var(--analysis-panel); border:1px solid var(--analysis-line); border-radius:11px; padding:13px 18px; }
+        .region-summary strong { display:block; color:var(--analysis-text); font-size:12px; font-weight:650; }
+        .region-summary small { display:block; color:var(--analysis-muted); font-size:10px; margin-top:4px; }
+        .region-track { display:flex; height:9px; border-radius:6px; overflow:hidden; background:var(--analysis-line); }
+        .region-legend { display:flex; gap:12px; flex-wrap:wrap; margin-top:7px; color:var(--analysis-muted); font-size:10px; }
+        .region-legend i { display:inline-block; width:6px; height:6px; border-radius:2px; margin-right:4px; }
+        @media(max-width:1250px) { .overview-hero { grid-template-columns:1fr; gap:17px; padding:24px; } .hero-right { flex-direction:row; flex-wrap:wrap; align-items:center; justify-content:space-between; } .hero-hint { display:none; } .hero-period strong { font-size:19px; } .metric-value { font-size:24px; } .flow-values strong { font-size:18px; } }
+        @media(max-width:1050px) { .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .metric-value { font-size:28px; } .flow-values strong { font-size:23px; } }
+        @media(max-width:600px) { .overview-hero { padding:23px 19px; border-radius:13px; } .overview-hero h1 { font-size:25px; } .hero-subtitle { font-size:12px; } .hero-right { align-items:flex-start; flex-direction:column; gap:12px; } .hero-actions { width:100%; } .hero-actions a { flex:1; padding:9px 8px; } .metric-grid { gap:9px; } .metric-card { padding:15px 13px; } .metric-value { font-size:22px; } .metric-icon { width:27px; height:27px; } .metric-label { font-size:11px; } .metric-note { font-size:10px; } .flow-values strong { font-size:18px; } .region-summary { grid-template-columns:1fr; gap:9px; padding:12px 14px; } .region-summary small { display:none; } }
         </style>'''),
-        mo.Html(f'''<div class="analysis-heading"><div><h1>국민연금 사업장 분석</h1><p>지역·업종·규모별 공개 사업장 현황</p></div><div class="period-badge">자료 기준 <strong>{escape(', '.join(metadata['periods']))}</strong> &nbsp;·&nbsp; 게시 {escape(metadata['source_published_at'])}</div></div>'''),
+        mo.Html(f'''<section class="overview-hero" aria-label="국민연금 사업장 대시보드 상단"><div><div class="hero-kicker"><span>월간 공개자료</span><span>국민연금공단 · 게시 {escape(metadata['source_published_at'])}</span></div><h1>국민연금 사업장 분석</h1><p class="hero-subtitle">지역·업종·규모별 현황을 살펴보고, 전체 원본과 코드를 직접 탐색하세요.</p></div><div class="hero-right"><div class="hero-period"><span>자료 기준월</span><strong>{escape(', '.join(metadata['periods']))}</strong></div><nav class="hero-actions" aria-label="분석 화면 이동"><a href="{escape(page_links['dashboard'] if page_links['editing'] else page_links['editor'])}" class="primary">{'대시보드 보기' if page_links['editing'] else '노트북 편집'} <span aria-hidden="true">↗</span></a><a href="{escape(page_links['explorer'])}">전체 데이터 탐색 <span aria-hidden="true">→</span></a></nav><span class="hero-hint">편집기는 ‘전체 실행’으로 시작 · 수정한 노트북은 내려받아 보관</span></div></section>'''),
     ], gap=0)
 
 
@@ -140,25 +180,56 @@ def _(band_filter, connection, industry_filter, kind_filter, perf_counter, perio
 
 
 @app.cell
-def _(band_filter, escape, filter_elapsed_ms, industry_filter, kind_filter, metadata, mo, region_filter, status_filter, totals):
-    _scope = " · ".join([
+def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, kind_filter, metadata, mo, region_filter, status_filter, totals):
+    _scopes = [
         "전국" if region_filter.value == "전체" else str(region_filter.value),
         "모든 가입 상태" if status_filter.value == "전체" else str(status_filter.value),
         "모든 사업장 형태" if kind_filter.value == "전체" else str(kind_filter.value),
         "모든 규모" if band_filter.value == "전체" else str(band_filter.value),
-    ])
+    ]
     if industry_filter.value != "전체":
-        _scope += f" · 업종 {industry_filter.value}"
-    _coverage = totals['workplaces'] / metadata['totals']['workplaces'] * 100 if metadata['totals']['workplaces'] else 0
+        _scopes.append(f"업종 {industry_filter.value}")
+    _scope_html = "".join(f"<b>{escape(label)}</b>" for label in _scopes)
+    _coverage = totals["workplaces"] / metadata["totals"]["workplaces"] * 100 if metadata["totals"]["workplaces"] else 0
+    _registered = sum(row["workplaces"] for row in filtered_rows if row["status"] == "등록")
+    _registered_share = _registered / totals["workplaces"] * 100 if totals["workplaces"] else 0
+    _billing_share = totals["billing"] / metadata["totals"]["billing"] * 100 if metadata["totals"]["billing"] else 0
+    _subscriber_share = totals["subscribers"] / metadata["totals"]["subscribers"] * 100 if metadata["totals"]["subscribers"] else 0
+    _average = f"{totals['subscribers']/totals['workplaces']:,.1f}명" if totals["workplaces"] else "—"
+    _per_subscriber = f"{totals['billing']/totals['subscribers']:,.0f}원" if totals["subscribers"] else "—"
+    _flow_total = totals["new"] + totals["lost"]
+    _new_share = totals["new"] / _flow_total * 100 if _flow_total else 0
+    _icon_start = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    _building = _icon_start + '<path d="M4 21V5l8-2v18M12 9h8v12M2 21h20M7 8h2M7 12h2M7 16h2M15 12h2M15 16h2"/></svg>'
+    _people = _icon_start + '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M19 21v-3a6 6 0 0 0-2-4"/></svg>'
+    _wallet = _icon_start + '<rect x="3" y="5" width="18" height="15" rx="3"/><path d="M3 8h18M16 12h5v5h-5zM5 5V3h12"/></svg>'
+    _arrows = _icon_start + '<path d="M3 7h16M15 3l4 4-4 4M21 17H5M9 13l-4 4 4 4"/></svg>'
+    _regions = {}
+    for _row in filtered_rows:
+        _regions[_row["region"]] = _regions.get(_row["region"], 0) + _row["subscribers"]
+    _leaders = sorted(_regions.items(), key=lambda pair: pair[1], reverse=True)[:4]
+    _remainder = totals["subscribers"] - sum(value for _, value in _leaders)
+    if _remainder:
+        _leaders.append(("그 외 지역", _remainder))
+    _colors = ["#2563eb", "#5b8def", "#16a3a1", "#8b5cf6", "#c4cfdf"]
+    _region_track = ""
+    _region_legend = ""
+    if totals["subscribers"]:
+        for (_name, _value), _color in zip(_leaders, _colors):
+            _share = _value / totals["subscribers"] * 100
+            _region_track += f'<span style="width:{_share}%;background:{_color}" title="{escape(_name)} {_share:.1f}%"></span>'
+            _region_legend += f'<span><i style="background:{_color}"></i>{escape(_name)} {_share:.1f}%</span>'
+    _region_summary = mo.Html(f'<div class="region-summary"><div><strong>가입자의 지역 구성</strong><small>현재 선택 범위의 가입자 합계</small></div><div><div class="region-track" role="img" aria-label="지역별 가입자 구성">{_region_track}</div><div class="region-legend">{_region_legend}</div></div></div>') if totals["subscribers"] else mo.Html("")
     mo.vstack([
-        mo.Html(f'<div class="scope-line"><span>현재 조건 &nbsp;<b>{escape(_scope)}</b></span><span>공개 사업장 행의 {_coverage:,.1f}% 선택 &nbsp;·&nbsp; SQL 조회 {filter_elapsed_ms:,.0f}ms</span></div>'),
+        mo.Html(f'<div class="scope-line"><div class="scope-chips"><span>분석 범위</span>{_scope_html}</div><span>공개 기록의 {_coverage:,.1f}% 선택 · SQL 조회 {filter_elapsed_ms:,.0f}ms</span></div>'),
         mo.Html(f'''<div class="metric-grid">
-        <div class="metric-card"><div class="metric-label">사업장 수</div><div class="metric-value">{totals['workplaces']:,}<small> 개</small></div><div class="metric-note">원본 사업장 행 수</div></div>
-        <div class="metric-card"><div class="metric-label">가입자 수</div><div class="metric-value">{totals['subscribers']:,}<small> 명</small></div><div class="metric-note">사업장별 가입자 합계</div></div>
-        <div class="metric-card"><div class="metric-label">당월 고지금액</div><div class="metric-value">{totals['billing']/100_000_000:,.1f}<small> 억 원</small></div><div class="metric-note">실제 소득과 다를 수 있음</div></div>
-        <div class="metric-card"><div class="metric-label">신규취득 / 상실</div><div class="metric-value" style="font-size:22px">{totals['new']:,} / {totals['lost']:,}<small> 명</small></div><div class="metric-note">납부재개 / 납부예외 포함</div></div>
+        <article class="metric-card" style="--metric-accent:#2563eb;--metric-tint:#edf3ff"><div class="metric-top"><span class="metric-label">사업장 수</span><span class="metric-icon">{_building}</span></div><div class="metric-value">{totals['workplaces']:,}<small>개</small></div><div class="metric-note">등록 {_registered_share:.1f}% · 원본 사업장 행 수</div><div class="metric-progress"><span style="width:{_registered_share}%;background:#2563eb"></span></div></article>
+        <article class="metric-card" style="--metric-accent:#0d9488;--metric-tint:#e7f7f4"><div class="metric-top"><span class="metric-label">가입자 수</span><span class="metric-icon">{_people}</span></div><div class="metric-value">{totals['subscribers']:,}<small>명</small></div><div class="metric-note">사업장당 평균 {_average}</div><div class="metric-progress" title="전체 공개 가입자의 {_subscriber_share:.1f}%" aria-label="전체 공개 가입자의 {_subscriber_share:.1f}%"><span style="width:{_subscriber_share}%;background:#0d9488"></span></div></article>
+        <article class="metric-card" style="--metric-accent:#7c3aed;--metric-tint:#f3edff"><div class="metric-top"><span class="metric-label">당월 고지금액</span><span class="metric-icon">{_wallet}</span></div><div class="metric-value">{totals['billing']/100_000_000:,.1f}<small>억 원</small></div><div class="metric-note">가입자당 {_per_subscriber} · 실제 소득과 다름</div><div class="metric-progress" title="전체 공개 고지금액의 {_billing_share:.1f}%" aria-label="전체 공개 고지금액의 {_billing_share:.1f}%"><span style="width:{_billing_share}%;background:#7c3aed"></span></div></article>
+        <article class="metric-card" style="--metric-accent:#d97706;--metric-tint:#fff5e8"><div class="metric-top"><span class="metric-label">신규취득 · 상실</span><span class="metric-icon">{_arrows}</span></div><div class="flow-values"><div><strong>{totals['new']:,}</strong><span>신규취득(명)</span></div><div><strong>{totals['lost']:,}</strong><span>상실(명)</span></div></div><div class="metric-note">납부재개 · 납부예외 포함</div><div class="metric-progress"><span style="width:{_new_share}%;background:#d97706"></span><span style="flex:1;background:#f4d2a2"></span></div></article>
         </div>'''),
-        mo.md("<small>공개 범위: 가입자 3인 이상 법인·10인 이상 개인(2025년 7월 이후). 원본에 포함된 탈퇴·0명 행을 보존했습니다. 전체 고용 통계와 다릅니다.</small>"),
+        _region_summary,
+        mo.md("<small>공개 범위: 가입자 3인 이상 법인·10인 이상 개인(2025년 7월 이후). 탈퇴·0명 원본 행을 보존했으며 전체 고용 통계와 다릅니다.</small>"),
     ], gap=0.8)
 
 
@@ -192,7 +263,7 @@ def _(alt, escape, filtered_rows, metric_filter, metrics, mo, query_rows):
 
 
 @app.cell
-def _(alt, band_rows, bar_chart, filtered_rows, industry_rows, metadata, metric_key, metric_labels, mo, panel, region_rows):
+def _(alt, band_rows, bar_chart, filtered_rows, industry_rows, metadata, metric_key, metric_labels, mo, panel, region_rows, top_n_filter):
     if not filtered_rows:
         overview = mo.callout("선택한 조건에 해당하는 사업장이 없습니다. 탐색 조건을 초기화하거나 범위를 넓혀 주세요.", kind="info")
     else:
@@ -207,7 +278,7 @@ def _(alt, band_rows, bar_chart, filtered_rows, industry_rows, metadata, metric_
         overview = mo.vstack([
             mo.hstack([
                 panel(f"지역별 {metric_labels[metric_key]}", mo.ui.altair_chart(bar_chart(region_rows, height=_height), chart_selection=False, legend_selection=False), "지역명·코드는 원본 표기 기준"),
-                panel(f"업종별 {metric_labels[metric_key]} · 상위 12개", mo.ui.altair_chart(bar_chart(industry_rows[:12], "#0d9488", _height), chart_selection=False, legend_selection=False), f"선택 조건의 {len(industry_rows):,}개 업종 중 상위 항목"),
+                panel(f"업종별 {metric_labels[metric_key]} · 상위 {top_n_filter.value}개", mo.ui.altair_chart(bar_chart(industry_rows[:top_n_filter.value], "#0d9488", max(_height,top_n_filter.value*24)), chart_selection=False, legend_selection=False), f"선택 조건의 {len(industry_rows):,}개 업종 중 상위 항목"),
             ], widths="equal", wrap=True, align="start", gap=1),
             mo.hstack([
                 panel(f"사업장 규모별 {metric_labels[metric_key]}", mo.ui.altair_chart(bar_chart(band_rows, "#6366f1", 350, metadata["size_bands"]), chart_selection=False, legend_selection=False)),

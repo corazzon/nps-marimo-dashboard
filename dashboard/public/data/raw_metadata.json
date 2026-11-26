@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "title": "국민연금 가입 사업장 전체 원본 탐색",
+  "source_url": "https://www.data.go.kr/data/15083277/fileData.do",
+  "source_published_at": "2026-11-23",
+  "collected_at": "2026-11-26T13:01:19+09:00",
+  "source_sha256": "0b0d09d958f558a5ef2989aff2ff06524b248b072a4eacd3c51989c109f7cf62",
+  "source_bytes": 114885359,
+  "source_file": "data/nps_workplaces_20261123.csv",
+  "periods": [
+    "2026-10"
+  ],
+  "row_count": 588075,
+  "column_count": 22,
+  "columns": [
+    {
+      "name": "자료생성년월",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장명",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업자등록번호",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장가입상태코드 1 등록 2 탈퇴",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "우편번호",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장지번상세주소",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장도로명상세주소",
+      "type": "VARCHAR",
+      "missing": 21972
+    },
+    {
+      "name": "고객법정동주소코드",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "고객행정동주소코드",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "법정동주소광역시도코드",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "법정동주소광역시시군구코드",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "법정동주소광역시시군구읍면동코드",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장형태구분코드 1 법인 2 개인",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장업종코드",
+      "type": "VARCHAR",
+      "missing": 0
+    },
+    {
+      "name": "사업장업종코드명",
+      "type": "VARCHAR",
+      "missing": 712
+    },
+    {
+      "name": "적용일자",
+      "type": "VARCHAR",
+      "missing": 5
+    },
+    {
+      "name": "재등록일자",
+      "type": "VARCHAR",
+      "missing": 568133
+    },
+    {
+      "name": "탈퇴일자",
+      "type": "VARCHAR",
+      "missing": 553670
+    },
+    {
+      "name": "가입자수",
+      "type": "BIGINT",
+      "missing": 0
+    },
+    {
+      "name": "당월고지금액",
+      "type": "BIGINT",
+      "missing": 0
+    },
+    {
+      "name": "신규취득자수",
+      "type": "BIGINT",
+      "missing": 0
+    },
+    {
+      "name": "상실가입자수",
+      "type": "BIGINT",
+      "missing": 0
+    }
+  ],
+  "parquet_bytes": 25314646,
+  "parquet_sha256": "3fc212d3c3a5736dd96d7fe206f9c858e3900ec7711c7116b92e6280791afa37",
+  "max_subscribers": 126239,
+  "regions": [
+    {
+      "code": "11",
+      "name": "서울특별시"
+    },
+    {
+      "code": "12",
+      "name": "전남광주통합특별시"
+    },
+    {
+      "code": "26",
+      "name": "부산광역시"
+    },
+    {
+      "code": "27",
+      "name": "대구광역시"
+    },
+    {
+      "code": "28",
+      "name": "인천광역시"
+    },
+    {
+      "code": "30",
+      "name": "대전광역시"
+    },
+    {
+      "code": "31",
+      "name": "울산광역시"
+    },
+    {
+      "code": "36",
+      "name": "세종특별자치시"
+    },
+    {
+      "code": "41",
+      "name": "경기도"
+    },
+    {
+      "code": "42",
+      "name": "강원도"
+    },
+    {
+      "code": "43",
+      "name": "충청북도"
+    },
+    {
+      "code": "44",
+      "name": "충청남도"
+    },
+    {
+      "code": "45",
+      "name": "전라북도"
+    },
+    {
+      "code": "47",
+      "name": "경상북도"
+    },
+    {
+      "code": "48",
+      "name": "경상남도"
+    },
+    {
+      "code": "50",
+      "name": "제주특별자치도"
+    },
+    {
+      "code": "51",
+      "name": "강원특별자치도"
+    },
+    {
+      "code": "52",
+      "name": "전북특별자치도"
+    }
+  ],
+  "totals": {
+    "가입자수": 11597244,
+    "당월고지금액": 4381395703220,
+    "신규취득자수": 448834,
+    "상실가입자수": 363705
+  },
+  "coverage_note": "공공데이터포털 안내상 제공 범위는 가입자 수 3인 이상 법인사업장과 10인 이상 개인사업장(2025년 7월 이후)입니다. 원본에는 탈퇴·0명 사업장 기록도 포함되어 있습니다. 전체 사업장 또는 전체 고용인구 통계로 해석할 수 없습니다.",
+  "region_note": "지역은 원본 법정동 시도코드에 대응합니다. 코드 12의 ‘전남광주통합특별시’는 원본 주소 표기를 사용하며 현재 공식 행정구역이라는 의미가 아닙니다. 구 코드 42·45와 새 코드 51·52를 합치지 않았습니다.",
+  "publication_note": "공공데이터포털이 공개한 원본 22개 열과 모든 행을 조회합니다. 사업장명·공개 주소·축약 사업자등록번호가 포함됩니다. 원본에 없는 식별정보를 추가하지 않습니다.",
+  "type_note": "가입자수·당월고지금액·신규취득자수·상실가입자수는 정수형이며 코드·우편번호·일자는 원본 문자열을 보존합니다. 빈 필드는 결측으로 보존합니다.",
+  "verification": "표준 csv 모듈의 독립 전체 행 수·열별 결측·측정값 합계·원본 SHA256을 대조했고, DuckDB EXCEPT ALL로 Parquet 전체 22열의 행 일치를 확인했습니다.",
+  "prepared_at": "2026-11-26T14:41:24+09:00"
+}

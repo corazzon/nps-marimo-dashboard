@@ -13,8 +13,10 @@ from pathlib import Path
 
 PUBLIC_FILES = (
     "dashboard/app.py",
+    "dashboard/explorer.py",
     "dashboard/build.py",
     "dashboard/prepare_data.py",
+    "dashboard/prepare_raw.py",
     "dashboard/download_latest.py",
     "dashboard/requirements.txt",
     "dashboard/README.md",
@@ -24,6 +26,8 @@ PUBLIC_FILES = (
     "dashboard/public/data/metadata.json",
     "dashboard/public/data/snapshot.parquet",
     "dashboard/public/data/snapshot.json.gz",
+    "dashboard/public/data/raw.parquet",
+    "dashboard/public/data/raw_metadata.json",
     ".github/workflows/deploy-dashboard.yml",
 )
 
