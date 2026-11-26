@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "title": "국민연금공단_국민연금 가입 사업장 내역",
+  "source_url": "https://www.data.go.kr/data/15083277/fileData.do",
+  "download_url": "https://www.data.go.kr/cmm/cmm/fileDownload.do?atchFileId=FILE_000000007773090&fileDetailSn=1&insertDataPrcus=N",
+  "source_published_at": "2026-11-23",
+  "source_modified_at": "2026-11-23",
+  "collected_at": "2026-11-26T13:01:19+09:00",
+  "source_sha256": "0b0d09d958f558a5ef2989aff2ff06524b248b072a4eacd3c51989c109f7cf62",
+  "source_bytes": 114885359,
+  "source_encoding": "cp949",
+  "prepared_at": "2026-11-26T13:02:37+09:00",
+  "periods": [
+    "2026-10"
+  ],
+  "source_file": "data/nps_workplaces_20261123.csv",
+  "aggregation_engine": "DuckDB 1.5.5",
+  "parquet_file": "public/data/snapshot.parquet",
+  "size_bands": [
+    "0명",
+    "1~2명",
+    "3~4명",
+    "5~9명",
+    "10~29명",
+    "30~99명",
+    "100~299명",
+    "300~999명",
+    "1,000명 이상"
+  ],
+  "totals": {
+    "workplaces": 588075,
+    "subscribers": 11597244,
+    "billing": 4381395703220,
+    "new": 448834,
+    "lost": 363705
+  },
+  "totals_by_status": {
+    "등록": {
+      "workplaces": 553670,
+      "subscribers": 11593337,
+      "billing": 4380264824500,
+      "new": 448243,
+      "lost": 354116
+    },
+    "탈퇴": {
+      "workplaces": 34405,
+      "subscribers": 3907,
+      "billing": 1130878720,
+      "new": 591,
+      "lost": 9589
+    }
+  },
+  "quality": {
+    "source_rows": 588075,
+    "source_columns": 22,
+    "aggregate_rows": 56398,
+    "duplicate_rows": 0,
+    "zero_subscriber_rows": 34658,
+    "missing_values": {
+      "자료생성년월": 0,
+      "사업장명": 0,
+      "사업자등록번호": 0,
+      "사업장가입상태코드 1 등록 2 탈퇴": 0,
+      "우편번호": 0,
+      "사업장지번상세주소": 0,
+      "사업장도로명상세주소": 21972,
+      "고객법정동주소코드": 0,
+      "고객행정동주소코드": 0,
+      "법정동주소광역시도코드": 0,
+      "법정동주소광역시시군구코드": 0,
+      "법정동주소광역시시군구읍면동코드": 0,
+      "사업장형태구분코드 1 법인 2 개인": 0,
+      "사업장업종코드": 0,
+      "사업장업종코드명": 712,
+      "적용일자": 5,
+      "재등록일자": 568133,
+      "탈퇴일자": 553670,
+      "가입자수": 0,
+      "당월고지금액": 0,
+      "신규취득자수": 0,
+      "상실가입자수": 0
+    },
+    "metric_missing_values": {
+      "가입자수": 0,
+      "당월고지금액": 0,
+      "신규취득자수": 0,
+      "상실가입자수": 0
+    },
+    "metric_negative_values": {
+      "가입자수": 0,
+      "당월고지금액": 0,
+      "신규취득자수": 0,
+      "상실가입자수": 0
+    },
+    "unknown_region_rows": 0,
+    "unknown_status_rows": 0,
+    "unknown_kind_rows": 0,
+    "source_region_counts": [
+      {
+        "code": "11",
+        "region": "서울특별시",
+        "rows": 131972
+      },
+      {
+        "code": "12",
+        "region": "전남광주통합특별시",
+        "rows": 36591
+      },
+      {
+        "code": "26",
+        "region": "부산광역시",
+        "rows": 31901
+      },
+      {
+        "code": "27",
+        "region": "대구광역시",
+        "rows": 19309
+      },
+      {
+        "code": "28",
+        "region": "인천광역시",
+        "rows": 28824
+      },
+      {
+        "code": "30",
+        "region": "대전광역시",
+        "rows": 14455
+      },
+      {
+        "code": "31",
+        "region": "울산광역시",
+        "rows": 10790
+      },
+      {
+        "code": "36",
+        "region": "세종특별자치시",
+        "rows": 3535
+      },
+      {
+        "code": "41",
+        "region": "경기도",
+        "rows": 159051
+      },
+      {
+        "code": "42",
+        "region": "강원도",
+        "rows": 5
+      },
+      {
+        "code": "43",
+        "region": "충청북도",
+        "rows": 20077
+      },
+      {
+        "code": "44",
+        "region": "충청남도",
+        "rows": 25772
+      },
+      {
+        "code": "45",
+        "region": "전라북도",
+        "rows": 20
+      },
+      {
+        "code": "47",
+        "region": "경상북도",
+        "rows": 28982
+      },
+      {
+        "code": "48",
+        "region": "경상남도",
+        "rows": 33066
+      },
+      {
+        "code": "50",
+        "region": "제주특별자치도",
+        "rows": 7759
+      },
+      {
+        "code": "51",
+        "region": "강원특별자치도",
+        "rows": 16734
+      },
+      {
+        "code": "52",
+        "region": "전북특별자치도",
+        "rows": 19232
+      }
+    ],
+    "duplicate_policy": "완전 중복 행도 원본 기록으로 보존하며 임의 제거하지 않습니다.",
+    "metric_missing_policy": "측정값 결측이나 음수가 있으면 0으로 바꾸지 않고 생성에 실패합니다.",
+    "verification": "표준 csv 모듈로 원본 전체·가입상태별 합계를 독립 재계산하고 DuckDB SQL의 전체·상태별·모든 집계 차원의 분할 합계와 대조했습니다."
+  },
+  "coverage_note": "공공데이터포털 안내상 제공 범위는 가입자 수 3인 이상 법인사업장과 10인 이상 개인사업장(2025년 7월 이후)입니다. 원본에는 탈퇴·0명 사업장 기록도 포함되어 있습니다. 전체 사업장 또는 전체 고용인구 통계로 해석할 수 없습니다.",
+  "record_note": "사업장 수는 원본 행 수입니다. 사업자등록번호가 축약되어 있어 고유 사업장 수를 별도로 추정하지 않았습니다.",
+  "region_note": "지역은 원본 법정동 시도코드에 대응합니다. 코드 12의 ‘전남광주통합특별시’는 원본 주소 표기를 사용하며 현재 공식 행정구역이라는 의미가 아닙니다. 구 코드 42·45와 새 코드 51·52를 합치지 않았습니다.",
+  "period_note": "자료생성년월은 신고 반영 기준 월입니다. 파일 게시일·수집일·대시보드 생성일과 다르며 단일 월 스냅샷으로 시계열 추세를 추정하지 않습니다.",
+  "billing_note": "당월 고지금액은 국민연금 고지금액이며 매출·실수령 급여·실제소득과 같지 않습니다.",
+  "flow_note": "신규취득자수와 상실가입자수는 신고된 자격 취득·상실 인원입니다. 차이를 순고용 증가나 전체 고용 변동으로 해석하지 않습니다.",
+  "publication_note": "정적 배포에는 집계 행만 포함하고 사업장명·상세주소·사업자등록번호는 포함하지 않습니다."
+}
