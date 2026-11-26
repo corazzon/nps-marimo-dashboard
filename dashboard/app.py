@@ -141,7 +141,12 @@ def _(band_filter, connection, industry_filter, kind_filter, perf_counter, perio
 
 @app.cell
 def _(band_filter, escape, filter_elapsed_ms, industry_filter, kind_filter, metadata, mo, region_filter, status_filter, totals):
-    _scope = " · ".join([str(region_filter.value), str(status_filter.value), str(kind_filter.value), str(band_filter.value)])
+    _scope = " · ".join([
+        "전국" if region_filter.value == "전체" else str(region_filter.value),
+        "모든 가입 상태" if status_filter.value == "전체" else str(status_filter.value),
+        "모든 사업장 형태" if kind_filter.value == "전체" else str(kind_filter.value),
+        "모든 규모" if band_filter.value == "전체" else str(band_filter.value),
+    ])
     if industry_filter.value != "전체":
         _scope += f" · 업종 {industry_filter.value}"
     _coverage = totals['workplaces'] / metadata['totals']['workplaces'] * 100 if metadata['totals']['workplaces'] else 0
@@ -177,7 +182,7 @@ def _(alt, escape, filtered_rows, metric_filter, metrics, mo, query_rows):
 
     def panel(title, content, note=""):
         return mo.vstack([
-            mo.Html(f'<div><h2 class="panel-title">{escape(title)}</h2>' + (f'<p class="panel-note">{escape(note)}</p>' if note else '') + '</div>'), content,
+            mo.Html(f'<div><h2 style="color:var(--analysis-text);font-size:17px;font-weight:700;margin:0;letter-spacing:-.4px">{escape(title)}</h2>' + (f'<p style="color:var(--analysis-muted);font-size:12px;margin:5px 0 0;line-height:1.6">{escape(note)}</p>' if note else '') + '</div>'), content,
         ], gap=1).style({"background":"var(--analysis-panel)","border":"1px solid var(--analysis-line)","border-radius":"12px","padding":"20px","min-width":"0"})
 
     region_rows = rollup("region")
@@ -234,9 +239,13 @@ def _(mo):
 
 
 @app.cell
-def _(bar_chart, demo_top, industry_rows, mo):
+def _(alt, bar_chart, demo_top, industry_rows, mo):
     demo_rows = industry_rows[:demo_top.value]
-    demo_chart = mo.ui.altair_chart(bar_chart(demo_rows, "#2563eb", 370), chart_selection="point", legend_selection=False, label="막대를 클릭해 업종 선택")
+    _selection = alt.selection_point(name="industry_choice", fields=["항목"], empty=True)
+    _chart = bar_chart(demo_rows, "#2563eb", 370).add_params(_selection).encode(
+        color=alt.condition(_selection, alt.value("#2563eb"), alt.value("#cbd5e1"))
+    )
+    demo_chart = mo.ui.altair_chart(_chart, chart_selection=False, legend_selection=False, label="막대를 클릭해 업종 선택")
     return demo_chart, demo_rows
 
 
@@ -261,20 +270,16 @@ def _(connection, mo, totals):
 
 @app.cell
 def _(demo_chart, demo_native_sql, demo_rows, demo_top, mo, panel):
-    _indices = set()
-    _names = set()
-    for _selection in demo_chart.selections.values():
-        _indices.update(int(value) - 1 for value in _selection.get("_vgsid_", []))
-        _names.update(_selection.get("항목", []))
-        for _point in _selection.get("vlPoint", {}).get("or", []):
-            if "_vgsid_" in _point:
-                _indices.add(int(_point["_vgsid_"]) - 1)
-            if "항목" in _point:
-                _names.add(_point["항목"])
-    _selection = [row for index, row in enumerate(demo_rows) if index in _indices or row["항목"] in _names]
+    _signal = demo_chart.selections.get("industry_choice") or {}
+    _names = set(_signal.get("항목") or [])
+    _selection = [row for row in demo_rows if row["항목"] in _names]
     _selected = [{"업종":r["항목"],"사업장 수":r["workplaces"],"가입자 수":r["subscribers"],"당월 고지금액(원)":r["billing"]} for r in _selection]
     marimo_demo = mo.vstack([
-        mo.Html('''<div class="feature-steps"><div class="feature-step"><b>1. 슬라이더를 움직이세요</b><p>바뀐 입력을 사용하는 셀만 자동 재실행됩니다. 화면의 업종 수와 차트가 함께 갱신됩니다.</p></div><div class="feature-step"><b>2. 차트 막대를 클릭하세요</b><p>선택한 차트 데이터가 Python 변수로 전달되고 아래 표에 연결됩니다. Shift와 클릭으로 여러 업종을 선택하세요.</p></div><div class="feature-step"><b>3. 코드를 확인하세요</b><p>UI와 차트·표를 하나의 Python 파일로 관리합니다. 로컬 편집 시 셀의 의존관계를 따라 결과가 갱신됩니다.</p></div></div>'''),
+        mo.hstack([
+            mo.vstack([mo.md("**1. 슬라이더를 움직이세요**"), mo.md("바뀐 입력을 사용하는 셀만 자동 재실행됩니다. 업종 수와 차트가 함께 갱신됩니다.")], gap=0.5).style({"padding":"16px","border":"1px solid var(--analysis-line)","border-radius":"10px","background":"var(--analysis-panel)","font-size":"13px"}),
+            mo.vstack([mo.md("**2. 차트 막대를 클릭하세요**"), mo.md("선택한 차트 데이터가 Python으로 전달되어 표에 연결됩니다. Shift와 클릭으로 여러 업종을 선택하세요.")], gap=0.5).style({"padding":"16px","border":"1px solid var(--analysis-line)","border-radius":"10px","background":"var(--analysis-panel)","font-size":"13px"}),
+            mo.vstack([mo.md("**3. 코드를 확인하세요**"), mo.md("UI와 차트·표를 하나의 Python 파일로 관리합니다. 셀 의존관계에 따라 결과가 갱신됩니다.")], gap=0.5).style({"padding":"16px","border":"1px solid var(--analysis-line)","border-radius":"10px","background":"var(--analysis-panel)","font-size":"13px"}),
+        ], widths="equal", wrap=True, align="stretch", gap=0.8),
         panel("반응형 셀과 차트·표 연동", mo.vstack([
             demo_top, mo.md(f"현재 **상위 {demo_top.value}개 업종**을 표시합니다. 왼쪽 탐색 조건도 함께 적용됩니다."), demo_chart,
             mo.md(f"**선택한 업종 {len(_selected)}개**"),
@@ -285,7 +290,8 @@ def _(demo_chart, demo_native_sql, demo_rows, demo_top, mo, panel):
 업종수 = mo.ui.slider(start=3, stop=20, value=8)
 
 # 두 번째 셀: 입력 변경 시 이 차트 셀을 자동 실행
-연동차트 = mo.ui.altair_chart(차트, chart_selection="point")
+선택 = alt.selection_point(fields=["항목"])
+연동차트 = mo.ui.altair_chart(차트.add_params(선택))
 
 # 세 번째 셀: 차트 선택이 바뀌면 표 셀을 자동 실행
 # 차트의 선택 상태를 받아 업종과 연결

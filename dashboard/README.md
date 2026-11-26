@@ -26,6 +26,8 @@
 
 SQL의 `workplaces`는 공개 집계 전체, `selection`은 현재 탐색 조건의 집계입니다. 한 집계행에 여러 사업장 기록이 포함되므로 사업장 수는 `COUNT(*)`가 아니라 `SUM(workplaces)`로 계산합니다.
 
+DuckDB는 원본의 사전 집계와 브라우저의 조건별 집계·직접 SQL 조회에 사용합니다. 원본 114,885,359바이트에서 집계 Parquet 521,221바이트를 생성했으며, 브라우저가 Parquet을 한 번 받은 뒤 같은 메모리 연결을 재사용합니다. 반응형 셀은 바뀐 입력을 사용하는 셀을 갱신하고, 단일 Python 소스와 GitHub Actions로 실행·배포 과정을 재현합니다.
+
 ## 파일 구성
 
 - `app.py`: marimo 대시보드와 브라우저용 패키지 선언
@@ -89,7 +91,7 @@ uv run --no-sync marimo edit dashboard/app.py
 
 GitHub CLI(`gh`) 설치와 해당 계정 인증이 필요합니다. 워크플로는 빌드 성공 후 GitHub Pages에 게시하며, 저장소의 **Actions → 국민연금 대시보드 배포**에서 실행 결과를 확인할 수 있습니다. 별도 개인 액세스 토큰을 저장소 비밀 값에 추가하지 않고 GitHub Actions의 Pages 권한을 사용합니다.
 
-**배포 예정 주소:** [국민연금 가입 사업장 대시보드](https://corazzon.github.io/nps-marimo-dashboard/). 이 문서 작성 시점에는 배포 완료·외부 접속 검증 전입니다. 실제 배포 성공은 Actions 결과와 주소 응답을 확인한 뒤 판단합니다.
+**배포 주소:** [국민연금 가입 사업장 대시보드](https://corazzon.github.io/nps-marimo-dashboard/). 2026년 11월 26일 GitHub Actions의 빌드·검증·Pages 배포 성공과 공개 주소의 HTTP 200 응답을 확인했습니다.
 
 다른 저장소에 직접 배포할 경우 `dashboard/`와 `.github/workflows/deploy-dashboard.yml`을 함께 올리고 **Settings → Pages → Build and deployment → Source → GitHub Actions**를 선택합니다. 배포 출력인 `index.html`, `assets/`, `public/`, `.nojekyll`을 함께 유지해야 합니다.
 
