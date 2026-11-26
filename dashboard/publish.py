@@ -25,6 +25,7 @@ PUBLIC_FILES = (
     "dashboard/publish.py",
     "dashboard/tests/test_snapshot.py",
     "dashboard/tests/test_analytics.py",
+    "dashboard/tests/test_business_details.py",
     "dashboard/public/data/metadata.json",
     "dashboard/public/data/snapshot.parquet",
     "dashboard/public/data/snapshot.json.gz",

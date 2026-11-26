@@ -66,10 +66,10 @@ def _(analytics_metadata, mo):
 
 
 @app.cell
-async def _(Path, analytics_load, connection, mo, sys):
-    analytics_loaded = False
+async def _(Path, analytics_load, business_search, connection, mo, sys):
+    analytics_loaded = bool(connection.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name='businesses'").fetchone()[0])
     analytics_error = None
-    if analytics_load.value:
+    if (analytics_load.value or bool((business_search.value or "").strip())) and not analytics_loaded:
         try:
             _path = mo.notebook_location() / "public" / "data" / "analytics.parquet"
             if sys.platform == "emscripten":
@@ -106,6 +106,61 @@ def _(analytics_loaded, band_filter, connection, industry_filter, kind_filter, p
 def _(mo):
     get_active_tab, set_active_tab = mo.state("현황 비교")
     return get_active_tab, set_active_tab
+
+
+@app.cell
+def _(mo):
+    get_business_id, set_business_id = mo.state(None)
+    return get_business_id, set_business_id
+
+
+@app.cell
+def _(mo):
+    business_search = mo.ui.text(
+        label="사업장명 검색", placeholder="예: 삼성전자, 현대자동차, 준오헤어",
+        full_width=True, max_length=120,
+    ).form(submit_button_label="사업장명으로 검색", show_clear_button=True, clear_button_label="검색어 지우기", bordered=False)
+    return (business_search,)
+
+
+@app.cell
+def _(set_active_tab, set_business_id):
+    def select_business(record_id):
+        set_business_id(int(record_id))
+        set_active_tab("사업장 상세")
+        return int(record_id)
+
+    return (select_business,)
+
+
+@app.cell
+def _(mo, set_business_id):
+    clear_business = mo.ui.button(
+        value=0, on_click=lambda value: (set_business_id(None), value+1)[1],
+        label="다른 사업장 찾기",
+    )
+    return (clear_business,)
+
+
+@app.cell
+def _():
+    def build_business_history(row, analytics_metadata):
+        history = []
+        if row.get("match_status") == "matched" and row.get("previous_period") is not None and row.get("previous_subscribers") is not None and row.get("previous_billing") is not None:
+            previous_subscribers = row["previous_subscribers"]
+            previous_billing = row["previous_billing"]
+            rate = (analytics_metadata.get("history") or {}).get("contribution_rate", analytics_metadata["contribution_rate"])
+            previous_salary = previous_billing / previous_subscribers / rate * 12 if previous_subscribers > 0 and previous_billing > 0 else None
+            history.append({"period": row["previous_period"], "subscribers": previous_subscribers, "billing": previous_billing, "annual_salary": previous_salary})
+        history.append({"period": row["period"], "subscribers": row["subscribers"], "billing": row["billing"], "annual_salary": row["annual_salary_proxy"]})
+        return history
+
+    def business_change(before, after):
+        if before is None or after is None:
+            return {"difference": None, "percent": None}
+        return {"difference": after-before, "percent": (after / before-1)*100 if before != 0 else None}
+
+    return build_business_history, business_change
 
 
 @app.cell
@@ -285,11 +340,13 @@ def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, ki
         _region_summary,
         mo.md("<small>공개 범위: 가입자 3인 이상 법인·10인 이상 개인(2025년 7월 이후). 탈퇴·0명 원본 행을 보존했으며 전체 고용 통계와 다릅니다.</small>"),
     ], gap=0.8)
-    if get_active_tab() == "종합 통계·추정 연봉":
+    if get_active_tab() in ("종합 통계·추정 연봉", "사업장 상세"):
         _summary = mo.vstack([
             mo.Html(f'<div class="scope-line"><div class="scope-chips"><span>분석 범위</span>{_scope_html}</div></div>'),
             mo.md(f"<small>현재 탐색 범위의 원본 **{totals['workplaces']:,}개 사업장 · {totals['subscribers']:,}명** 중 아래 연봉 산출 조건을 적용합니다.</small>"),
         ], gap=0.3)
+    if get_active_tab() == "사업장 상세":
+        _summary = mo.md(f"<small>전체 공개 자료 **{metadata['totals']['workplaces']:,}개 사업장**에서 이름을 검색합니다. 상세 조회는 왼쪽 탐색 조건과 별도로 유지됩니다.</small>")
     _summary
 
 
@@ -596,7 +653,7 @@ def _(analytics_metadata, analytics_ready, connection, salary_min, totals):
 @app.cell
 def _(
     alt, analytics_metadata, analytics_ready, escape, mo, panel, salary_bill_rank,
-    salary_distribution, salary_groups, salary_min, salary_staff_rank, salary_stats,
+    salary_distribution, salary_groups, salary_min, salary_staff_rank, salary_stats, select_business,
 ):
     if not analytics_ready:
         salary_view = mo.callout("추정 연봉·순위 분석 데이터를 불러오면 현재 탐색 조건에 맞는 종합 통계를 확인할 수 있습니다.", kind="neutral")
@@ -645,22 +702,27 @@ def _(
             )
 
         def _rank_list(rows, measure):
-            _items = []
-            for _index, _row in enumerate(rows, start=1):
-                _value = f"{_row['billing'] / 100_000_000:,.1f}억 원" if measure == "billing" else f"{_row['subscribers']:,}명"
-                _exact = f"{_row[measure]:,}" + ("원" if measure == "billing" else "명")
-                _context = f"{_row['industry']} · {_row['region']} · {_row['subscribers']:,}명"
-                _items.append(
-                    '<div style="display:grid;grid-template-columns:23px minmax(0,1fr) 103px;gap:9px;padding:16px 0;border-top:1px solid var(--analysis-line);align-items:start">'
-                    f'<span style="font-size:16px;font-weight:700;color:var(--analysis-muted)">{_index}</span>'
-                    '<div style="min-width:0">'
-                    f'<div style="font-size:14px;font-weight:700;color:var(--analysis-text);line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{escape(_row["business_name"])}">{escape(_row["business_name"])}</div>'
-                    f'<div style="font-size:10px;color:var(--analysis-muted);line-height:1.6;margin:4px 0 3px;overflow-wrap:anywhere">{escape(_context)}</div>'
-                    + _history_svg(_row, measure) + '</div>'
-                    f'<div style="text-align:right;min-width:0"><div style="font-size:18px;color:#557e48;font-weight:750;line-height:1.6;letter-spacing:-.4px;overflow-wrap:anywhere" title="{_exact}">{_value}</div>'
-                    f'<div style="font-size:10px;color:var(--analysis-muted);margin-top:4px;line-height:1.6">추정 연봉<br>{_salary_text(_row["annual_salary_proxy"])}</div></div></div>'
+            items = []
+            for index, row in enumerate(rows, start=1):
+                record_id = int(row["record_id"])
+                value = f"{row['billing'] / 100_000_000:,.1f}억 원" if measure == "billing" else f"{row['subscribers']:,}명"
+                exact = f"{row[measure]:,}" + ("원" if measure == "billing" else "명")
+                context = f"{row['industry']} · {row['region']} · {row['subscribers']:,}명"
+                name_button = mo.ui.button(
+                    on_click=lambda value, selected_id=record_id: select_business(selected_id),
+                    label=f'<span style="display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{escape(row["business_name"])}</span>',
+                    tooltip=f"{row['business_name']} · 사업장 상세 조회", full_width=True,
                 )
-            return mo.Html('<div aria-label="상위 사업장 순위">' + "".join(_items) + '</div>')
+                items.append(mo.hstack([
+                    mo.md(f"**{index}**").style({"flex":"0 0 20px","padding-top":"8px"}),
+                    mo.vstack([
+                        name_button,
+                        mo.Html(f'<div style="font-size:10px;color:var(--analysis-muted);line-height:1.6;overflow-wrap:anywhere">{escape(context)}</div>'),
+                        mo.Html(_history_svg(row, measure)),
+                    ], gap=0.4).style({"flex":"1 1 0","min-width":"0"}),
+                    mo.Html(f'<div style="text-align:right;min-width:0"><div style="font-size:18px;color:#557e48;font-weight:750;line-height:1.6;letter-spacing:-.4px;overflow-wrap:anywhere" title="{exact}">{value}</div><div style="font-size:10px;color:var(--analysis-muted);margin-top:4px;line-height:1.6">추정 연봉<br>{_salary_text(row["annual_salary_proxy"])}</div></div>').style({"flex":"0 0 94px","min-width":"0"}),
+                ], align="start", gap=0.5).style({"padding":"14px 0","border-top":"1px solid var(--analysis-line)"}))
+            return mo.vstack(items, gap=0)
 
         _scope = f"왼쪽 탐색 조건 중 등록·가입자 {int(salary_min.value):,}명 이상·고지금액 양수 사업장만 분석합니다. 사업장은 원본의 행 단위입니다."
         _control = mo.vstack([
@@ -747,14 +809,176 @@ def _(
 
 
 @app.cell
-def _(analytics_error, analytics_load, analytics_ready, detail, get_active_tab, marimo_demo, mo, overview, salary_view, set_active_tab, source_detail, sql_explorer):
+def _(analytics_loaded, business_search, connection):
+    business_query = (business_search.value or "").strip()
+    business_search_count = 0
+    if analytics_loaded and business_query:
+        business_search_count = connection.execute("SELECT COUNT(*) FROM businesses WHERE contains(lower(business_name), lower(?))", [business_query]).fetchone()[0]
+    return business_query, business_search_count
+
+
+@app.cell
+def _(business_query, business_search_count, mo):
+    _query_dependency = business_query
+    business_search_page = mo.ui.slider(
+        start=1, stop=max(2,(business_search_count+19)//20), value=1, step=1,
+        include_input=True, debounce=True, show_value=True, full_width=True,
+        disabled=business_search_count<=20, label="검색 결과 페이지 · 페이지당 20개 사업장",
+    )
+    return (business_search_page,)
+
+
+@app.cell
+def _(analytics_loaded, business_query, business_search_count, business_search_page, connection):
+    business_results = []
+    if analytics_loaded and business_query and business_search_count:
+        _offset = (int(business_search_page.value)-1)*20
+        _cursor = connection.execute(
+            "SELECT record_id,business_name,region,industry,kind,status,registration_prefix,location_code,subscribers FROM businesses "
+            "WHERE contains(lower(business_name), lower(?)) "
+            "ORDER BY CASE WHEN lower(business_name)=lower(?) THEN 0 WHEN starts_with(lower(business_name),lower(?)) THEN 1 ELSE 2 END, subscribers DESC, record_id LIMIT 20 OFFSET ?",
+            [business_query,business_query,business_query,_offset],
+        )
+        _columns = [column[0] for column in _cursor.description]
+        business_results = [dict(zip(_columns,row)) for row in _cursor.fetchall()]
+    return (business_results,)
+
+
+@app.cell
+def _(analytics_error, analytics_loaded, business_query, business_results, business_search, business_search_count, business_search_page, escape, mo, panel, select_business):
+    _result_items = []
+    for _row in business_results:
+        _record_id = int(_row["record_id"])
+        _button = mo.ui.button(
+            on_click=lambda value, selected_id=_record_id: select_business(selected_id),
+            label=f'<span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">{escape(_row["business_name"])}</span>',
+            tooltip=f"{_row['business_name']} · 원본 기록 #{_record_id} 상세 조회", full_width=True,
+        )
+        _context = f"{_row['region']} · {_row['kind']} · {_row['status']} · 가입자 {_row['subscribers']:,}명 · 원본 기록 #{_record_id}"
+        _identifiers = f"사업자번호 앞자리 {_row['registration_prefix']} · 법정동 코드 {_row['location_code']}"
+        _result_items.append(mo.vstack([
+            _button,
+            mo.Html(f'<div style="font-size:11px;color:var(--analysis-muted);line-height:1.7;overflow-wrap:anywhere">{escape(_context)}<br>{escape(_row["industry"])} · {escape(_identifiers)}</div>'),
+        ], gap=0.4).style({"padding":"12px","border":"1px solid var(--analysis-line)","border-radius":"9px","min-width":"0"}))
+    if analytics_error:
+        _results_content = mo.callout(analytics_error, kind="warn")
+    elif not analytics_loaded:
+        _results_content = mo.callout("사업장명을 입력하고 검색하세요. 첫 검색 시 사업장 분석 자료를 한 번 불러옵니다.", kind="neutral")
+    elif not business_query:
+        _results_content = mo.md("검색어를 입력하면 전체 사업장에서 이름이 일치하는 결과를 찾습니다.")
+    elif not business_search_count:
+        _results_content = mo.callout("이름이 일치하는 사업장이 없습니다. 검색어를 줄이거나 사업장명을 확인해 주세요.", kind="neutral")
+    else:
+        _results_content = mo.vstack([
+            mo.md(f"**{business_search_count:,}개 사업장**이 검색되었습니다. 같은 이름의 사업장은 지역·형태·원본 기록 번호로 구분해 선택하세요."),
+            business_search_page,
+            mo.vstack(_result_items, gap=0.6).style({"max-height":"460px","overflow-y":"auto","padding-right":"4px"}),
+        ], gap=0.8)
+    business_search_view = panel("사업장명으로 찾기", mo.vstack([
+        business_search, _results_content,
+    ], gap=0.8), "전체 원본 사업장이 검색 대상이며, 왼쪽 필터·가입 상태·최소 가입자 수와 별도로 조회합니다.")
+    return (business_search_view,)
+
+
+@app.cell
+def _(analytics_loaded, analytics_metadata, build_business_history, connection, get_business_id):
+    selected_business = None
+    business_history = []
+    _selected_id = get_business_id()
+    if analytics_loaded and _selected_id is not None:
+        _cursor = connection.execute("SELECT * FROM businesses WHERE record_id=?", [int(_selected_id)])
+        _columns = [column[0] for column in _cursor.description]
+        _values = _cursor.fetchone()
+        if _values is not None:
+            selected_business = dict(zip(_columns,_values))
+            business_history = build_business_history(selected_business, analytics_metadata)
+    return business_history, selected_business
+
+
+@app.cell
+def _(alt, analytics_metadata, business_change, business_history, clear_business, csv, escape, io, mo, panel, selected_business):
+    if selected_business is None:
+        business_detail_view = mo.callout("검색 결과나 상위 10개 목록에서 사업장을 선택하면 추정 연봉·가입자 수·고지금액과 보유 과거 자료를 볼 수 있습니다.", kind="neutral")
+    else:
+        _row = selected_business
+        _current = business_history[-1]
+        _previous = business_history[0] if len(business_history)>1 else None
+        _cards = []
+        for _metric, _label, _unit in [("annual_salary","추정 연봉","만 원"),("subscribers","가입자 수","명"),("billing","당월 고지금액","억 원")]:
+            _value = _current[_metric]
+            if _value is None:
+                _text = "산출 불가"
+            elif _metric == "annual_salary":
+                _text = f"약 {_value/10000:,.0f}만 원"
+            elif _metric == "billing":
+                _text = f"{_value/100_000_000:,.2f}억 원"
+            else:
+                _text = f"{_value:,}명"
+            _delta = business_change(_previous[_metric] if _previous else None,_value)
+            if _metric == "annual_salary" and _value is None:
+                _change_text = "현재 양수 가입자·고지금액이 없어 추정값을 산출하지 않습니다."
+            elif _delta["difference"] is None:
+                _change_text = "비교 가능한 과거 추정값 없음" if _metric=="annual_salary" else "비교 가능한 과거 자료 없음"
+            else:
+                _difference = _delta["difference"]
+                _difference_text = f"{_difference/10000:+,.0f}만 원" if _metric=="annual_salary" else (f"{_difference/100_000_000:+,.2f}억 원" if _metric=="billing" else f"{_difference:+,}명")
+                _percent_text = f"{_delta['percent']:+.2f}%" if _delta["percent"] is not None else "변화율 산출 불가(이전 값 0)"
+                _change_text = f"{_previous['period']} 대비 {_difference_text} · {_percent_text}"
+            _exact = "양수 가입자·고지금액이 없어 산출하지 않습니다." if _value is None else (f"{_value:,.0f}원" if _metric != "subscribers" else f"{_value:,}명")
+            _cards.append(mo.Html(f'<article style="padding:18px;border:1px solid var(--analysis-line);border-radius:11px;background:var(--analysis-panel);min-width:0"><div style="color:var(--analysis-muted);font-size:12px">{_label}</div><div style="font-size:26px;font-weight:750;letter-spacing:-.5px;color:var(--analysis-text);margin:9px 0;overflow-wrap:anywhere" title="{escape(_exact)}">{_text}</div><div style="font-size:11px;color:var(--analysis-muted);line-height:1.7;overflow-wrap:anywhere">{escape(_change_text)}</div></article>').style({"flex":"1 1 230px","min-width":"min(100%,230px)"}))
+        _history_rows = [{
+            "자료 기준월": item["period"],
+            "사업장 추정연봉(원)": round(item["annual_salary"]) if item["annual_salary"] is not None else None,
+            "가입자수(명)": item["subscribers"], "당월고지금액(원)": item["billing"],
+        } for item in business_history]
+        _buffer = io.StringIO()
+        _writer = csv.DictWriter(_buffer,fieldnames=list(_history_rows[0]))
+        _writer.writeheader()
+        _writer.writerows(_history_rows)
+        _charts = []
+        for _metric, _label, _divisor, _unit in [("annual_salary","추정 연봉",10000,"만 원"),("subscribers","가입자 수",1,"명"),("billing","고지금액",100_000_000,"억 원")]:
+            _observations = [{"period": item["period"],"value":item[_metric]/_divisor} for item in business_history if item[_metric] is not None]
+            if not _observations:
+                _charts.append(panel(_label,mo.callout("보유 시점에서 추정값을 계산할 수 없어 그래프를 표시하지 않습니다.",kind="neutral")).style({"flex":"1 1 240px","min-width":"min(100%,240px)"}))
+                continue
+            _chart = (alt.Chart(alt.Data(values=_observations)).mark_line(point=alt.OverlayMarkDef(size=75,filled=True),color="#2563eb",strokeWidth=2).encode(
+                x=alt.X("period:N",sort=[item["period"] for item in business_history],title=None,axis=alt.Axis(labelAngle=0)),
+                y=alt.Y("value:Q",title=_unit,scale=alt.Scale(zero=True),axis=alt.Axis(format=",.0f",tickCount=4)),
+                tooltip=[alt.Tooltip("period:N",title="자료 기준월"),alt.Tooltip("value:Q",title=f"{_label}({_unit})",format=",.2f")],
+            ).properties(height=180,width="container",autosize=alt.AutoSizeParams(type="fit",contains="padding",resize=True)).configure_view(stroke=None))
+            _charts.append(panel(_label,mo.ui.altair_chart(_chart,chart_selection=False,legend_selection=False), "보유한 실제 관측값만 표시합니다.").style({"flex":"1 1 240px","min-width":"min(100%,240px)"}))
+        _identity = f"{_row['region']} · {_row['kind']} · {_row['status']} · {_row['industry']}"
+        _reason = analytics_metadata.get("match_status_labels",{}).get(_row["match_status"],"연결 정보 없음")
+        _comparison_note = "2026년 6월과 10월의 두 관측값을 비교합니다. 월별 중간값은 만들지 않으며, 고지금액 변화는 급여 상승·하락과 다릅니다." if _previous else f"과거 자료를 안전하게 연결할 수 없어 현재 기록만 표시합니다. 연결 상태: {_reason}. 과거 값은 0으로 채우지 않습니다."
+        business_detail_view = mo.vstack([
+            panel("선택한 사업장 상세",mo.vstack([
+                mo.hstack([mo.Html(f'<h2 style="font-size:24px;font-weight:750;letter-spacing:-.5px;color:var(--analysis-text);margin:0;overflow-wrap:anywhere">{escape(_row["business_name"])}</h2>'),clear_business],wrap=True,align="center"),
+                mo.Html(f'<p style="font-size:13px;color:var(--analysis-muted);line-height:1.7;margin:0">{escape(_identity)}</p>'),
+                mo.md(f"자료 기준 **{_row['period']}** · 원본 기록 **#{_row['record_id']}** · 사업자번호 앞자리 **{_row['registration_prefix']}** · 법정동 코드 **{_row['location_code']}**"),
+                mo.hstack(_cards,wrap=True,align="stretch",gap=0.8),
+            ],gap=0.8)),
+            mo.callout("추정 연봉은 국민연금 고지금액을 보험료율로 역산한 사업장 평균 기준소득의 연환산 값입니다. 실제 연봉·실수령액과 다릅니다.",kind="neutral"),
+            mo.md(_comparison_note),
+            mo.hstack(_charts,wrap=True,align="start",gap=0.8),
+            panel("보유 시점별 상세 수치",mo.vstack([
+                mo.ui.table(_history_rows,selection=None,pagination=False,show_download=False,show_column_summaries=False,show_data_types=False,label="사업장별 실제 보유 시점 비교"),
+                mo.download(_buffer.getvalue().encode("utf-8-sig"),filename=f"사업장_{_row['record_id']}_시점별상세.csv",mimetype="text/csv",label="선택 사업장 시점별 CSV"),
+            ]), "빈 추정연봉은 양수 분모·고지금액이 없어 계산할 수 없다는 뜻입니다. 실제 가입자·고지금액 0과 구분합니다."),
+            mo.md("두 시점의 보험료율은 9.5%이며 기준소득월액 상한은 637만원에서 659만원으로 변경됐습니다. 개인별 상한 초과 여부는 이 자료로 확인할 수 없습니다."),
+        ],gap=1)
+    return (business_detail_view,)
+
+
+@app.cell
+def _(analytics_error, analytics_load, analytics_ready, business_detail_view, business_search_view, detail, get_active_tab, marimo_demo, mo, overview, salary_view, selected_business, set_active_tab, source_detail, sql_explorer):
+    _business_content = business_detail_view if selected_business is not None else mo.vstack([business_search_view,business_detail_view],gap=1)
     _salary_content = salary_view if analytics_ready else mo.vstack([
         mo.md("## 종합 통계·추정 연봉"),
         mo.md("등록·가입자 5명 이상·고지금액 양수인 사업장의 추정 연봉, 규모별 분포와 상위 사업장을 확인합니다. 왼쪽 탐색 조건도 적용됩니다."),
         analytics_load,
         mo.callout(analytics_error, kind="warn") if analytics_error else mo.md("사업장별 분석 자료는 버튼을 누를 때 한 번 받습니다. 추정 연봉은 실제 연봉·실수령액과 다르며, 산출 방법을 함께 제공합니다."),
     ], gap=1)
-    main_tabs = mo.ui.tabs({"현황 비교":overview,"종합 통계·추정 연봉":_salary_content,"집계 데이터":detail,"SQL 탐색":sql_explorer,"마리모 기능 체험":marimo_demo,"출처·품질":source_detail}, value=get_active_tab(), on_change=set_active_tab, lazy=True)
+    main_tabs = mo.ui.tabs({"현황 비교":overview,"종합 통계·추정 연봉":_salary_content,"사업장 상세":_business_content,"집계 데이터":detail,"SQL 탐색":sql_explorer,"마리모 기능 체험":marimo_demo,"출처·품질":source_detail}, value=get_active_tab(), on_change=set_active_tab, lazy=True)
     main_tabs
     return (main_tabs,)
 
