@@ -35,9 +35,16 @@ async def _(json, mo, sys):
         if not _response.ok:
             raise RuntimeError("전체 데이터의 출처 정보를 불러오지 못했습니다.")
         raw_metadata = await _response.json()
+        _salary_response = await _pyfetch(str(data_root / "analytics_metadata.json"))
+        if not _salary_response.ok:
+            raise RuntimeError("추정 연봉의 산출 기준을 불러오지 못했습니다.")
+        salary_policy = await _salary_response.json()
     else:
         raw_metadata = json.loads((data_root / "raw_metadata.json").read_text(encoding="utf-8"))
-    return data_root, raw_metadata
+        salary_policy = json.loads((data_root / "analytics_metadata.json").read_text(encoding="utf-8"))
+    if salary_policy["source_sha256"] != raw_metadata["source_sha256"]:
+        raise RuntimeError("원본과 추정 연봉 자료의 기준이 서로 다릅니다.")
+    return data_root, raw_metadata, salary_policy
 
 
 @app.cell
@@ -47,7 +54,7 @@ def _(mo, raw_metadata):
 
 
 @app.cell
-async def _(Path, data_root, duckdb, load_raw, mo, perf_counter, sys):
+async def _(Path, data_root, duckdb, load_raw, mo, perf_counter, salary_policy, sys):
     raw_connection = None
     load_elapsed_ms = None
     load_error = None
@@ -66,6 +73,10 @@ async def _(Path, data_root, duckdb, load_raw, mo, perf_counter, sys):
                 _path = data_root / "raw.parquet"
             raw_connection = duckdb.connect(":memory:")
             raw_connection.execute("CREATE TABLE raw_workplaces AS SELECT * FROM read_parquet(?)", [str(_path)])
+            _rate = float(salary_policy["contribution_rate"])
+            if not 0 < _rate < 1:
+                raise ValueError("보험료율이 올바르지 않습니다.")
+            raw_connection.execute(f'CREATE VIEW salary_estimates AS SELECT *, CASE WHEN "가입자수">0 AND "당월고지금액">0 THEN ROUND("당월고지금액" * 12.0 / "가입자수" / {_rate})::BIGINT END AS "추정연봉(원)" FROM raw_workplaces')
             load_elapsed_ms = (perf_counter() - _start) * 1000
         except Exception as _error:
             raw_connection = None
@@ -136,19 +147,21 @@ def _(mo, page_count_raw, raw_connection):
 
 
 @app.cell
-def _(page_size_raw, page_slider_raw, raw_connection, raw_parameters, raw_where, sort_raw):
+def _(page_size_raw, page_slider_raw, raw_connection, raw_parameters, raw_where, salary_policy, sort_raw):
     raw_page = []
     raw_offset = (page_slider_raw.value - 1) * page_size_raw.value
     if raw_connection is not None:
-        _cursor = raw_connection.execute("SELECT * FROM raw_workplaces WHERE " + raw_where + " ORDER BY " + sort_raw.value + " LIMIT ? OFFSET ?", [*raw_parameters, page_size_raw.value, raw_offset])
+        _cursor = raw_connection.execute(f'SELECT *, CASE WHEN "가입자수">0 AND "당월고지금액">0 THEN ROUND("당월고지금액" * 12.0 / "가입자수" / {float(salary_policy["contribution_rate"])})::BIGINT END AS "추정연봉(원)" FROM raw_workplaces WHERE ' + raw_where + " ORDER BY " + sort_raw.value + " LIMIT ? OFFSET ?", [*raw_parameters, page_size_raw.value, raw_offset])
         _names = [column[0] for column in _cursor.description]
-        raw_page = [dict(zip(_names, row)) for row in _cursor.fetchall()]
+        _display_names = _names[:2] + ["추정연봉(원)"] + _names[2:-1]
+        raw_page = [{key: dict(zip(_names, row))[key] for key in _display_names} for row in _cursor.fetchall()]
     return raw_offset, raw_page
 
 
 @app.cell
 def _(count_elapsed_ms, csv, io, kind_raw, matched_raw, mo, page_size_raw, page_slider_raw, raw_connection, raw_metadata, raw_offset, raw_page, region_raw, reset_raw, search_raw, sort_raw, status_raw, subscriber_range):
-    _columns = [row["name"] for row in raw_metadata["columns"]]
+    _original_columns = [row["name"] for row in raw_metadata["columns"]]
+    _columns = _original_columns[:2] + ["추정연봉(원)"] + _original_columns[2:]
     _buffer = io.StringIO()
     _writer = csv.DictWriter(_buffer, fieldnames=_columns)
     _writer.writeheader()
@@ -163,8 +176,8 @@ def _(count_elapsed_ms, csv, io, kind_raw, matched_raw, mo, page_size_raw, page_
         ], gap=1).style({"background":"#f7f9fc","border":"1px solid #e0e7f1","border-radius":"12px","padding":"20px"}),
         mo.hstack([mo.md(_count_info), mo.download(_buffer.getvalue().encode("utf-8-sig"), filename="국민연금_원본_현재페이지.csv", mimetype="text/csv", label="현재 페이지 CSV", disabled=not raw_page)], wrap=True),
         page_slider_raw,
-        mo.md(f"**{raw_offset + 1:,}~{raw_offset + len(raw_page):,}행** 표시 · 원본 22개 열을 가로로 스크롤하여 확인할 수 있습니다.") if raw_page else mo.callout("선택 조건에 맞는 행이 없습니다. 전체 데이터를 먼저 불러오거나 검색·범위를 초기화하세요.", kind="neutral"),
-        mo.ui.table(raw_page, pagination=False, selection=None, show_download=False, show_column_summaries=False, show_data_types=False, max_columns=22, max_height=650, freeze_columns_left=["자료생성년월","사업장명"], label="원본 전체 데이터의 현재 페이지") if raw_page else mo.md(""),
+        mo.md(f"**{raw_offset + 1:,}~{raw_offset + len(raw_page):,}행** 표시 · 원본 22개 열과 계산한 추정연봉 1개 열을 제공합니다. 추정연봉은 실제 급여와 다릅니다.") if raw_page else mo.callout("선택 조건에 맞는 행이 없습니다. 전체 데이터를 먼저 불러오거나 검색·범위를 초기화하세요.", kind="neutral"),
+        mo.ui.table(raw_page, pagination=False, selection=None, show_download=False, show_column_summaries=False, show_data_types=False, max_columns=23, max_height=650, freeze_columns_left=["자료생성년월","사업장명"], label="원본 전체 데이터의 현재 페이지") if raw_page else mo.md(""),
     ], gap=1)
     return (raw_browse,)
 
@@ -173,6 +186,7 @@ def _(count_elapsed_ms, csv, io, kind_raw, matched_raw, mo, page_size_raw, page_
 def _(mo):
     raw_sql_presets = {
         "원본 100행": 'SELECT * FROM raw_workplaces\nLIMIT 100',
+        "사업장별 추정 연봉": 'SELECT "사업장명", "가입자수", "추정연봉(원)"\nFROM salary_estimates\nWHERE "추정연봉(원)" IS NOT NULL ORDER BY "추정연봉(원)" DESC LIMIT 100',
         "가입자 수 상위 사업장": 'SELECT "사업장명", "사업장지번상세주소", "가입자수", "당월고지금액"\nFROM raw_workplaces\nORDER BY "가입자수" DESC LIMIT 100',
         "지역별 원본 사업장 집계": 'SELECT "법정동주소광역시도코드", COUNT(*) AS "사업장 수",\n SUM("가입자수") AS "가입자 수", SUM("당월고지금액") AS "당월 고지금액"\nFROM raw_workplaces\nGROUP BY "법정동주소광역시도코드"\nORDER BY "가입자 수" DESC',
     }
@@ -188,7 +202,7 @@ def _(mo, raw_sql_preset, raw_sql_presets):
 
 @app.cell
 def _(csv, io, mo, perf_counter, raw_connection, raw_metadata, raw_sql_editor, raw_sql_preset):
-    _content = mo.callout(f"raw_workplaces는 원본 전체 {raw_metadata['row_count']:,}행과 {raw_metadata['column_count']}개 열입니다. 이 SQL에는 탐색 탭의 검색·슬라이드바 조건이 자동 적용되지 않습니다.", kind="neutral")
+    _content = mo.callout(f"raw_workplaces는 원본 전체 {raw_metadata['row_count']:,}행과 {raw_metadata['column_count']}개 열입니다. salary_estimates에는 추정연봉(원)이 추가됩니다. 이 SQL에는 탐색 탭의 검색·슬라이드바 조건이 자동 적용되지 않습니다.", kind="neutral")
     if raw_sql_editor.value:
         if raw_connection is None:
             _content = mo.callout("먼저 화면 상단의 ‘전체 데이터 불러오기’를 눌러 주세요.", kind="warn")
@@ -212,7 +226,7 @@ def _(csv, io, mo, perf_counter, raw_connection, raw_metadata, raw_sql_editor, r
                 _writer.writerows(_result)
                 _content = mo.vstack([
                     mo.hstack([mo.md(f"**{len(_records):,}행** · SQL 실행 {_elapsed:,.1f}ms" + (" · 3,000행까지만 표시·다운로드합니다." if _truncated else "")), mo.download(_buffer.getvalue().encode("utf-8-sig"), filename="국민연금_원본_SQL결과.csv", mimetype="text/csv", label="표시된 SQL 결과 CSV")], wrap=True),
-                    mo.ui.table(_records, pagination=True, page_size=25, selection=None, show_download=False, show_column_summaries=False, show_data_types=False, max_columns=22, max_height=650),
+                    mo.ui.table(_records, pagination=True, page_size=25, selection=None, show_download=False, show_column_summaries=False, show_data_types=False, max_columns=23, max_height=650),
                 ])
             except Exception as _error:
                 _content = mo.callout(f"조회하지 못했습니다: {_error}", kind="warn")
@@ -221,7 +235,7 @@ def _(csv, io, mo, perf_counter, raw_connection, raw_metadata, raw_sql_editor, r
 
 
 @app.cell
-def _(mo, raw_browse, raw_metadata, raw_sql_panel):
+def _(json, mo, raw_browse, raw_metadata, raw_sql_panel, salary_policy):
     _schema = [{"열": row["name"], "자료형": row["type"], "원본 결측 행": row["missing"]} for row in raw_metadata["columns"]]
     mo.ui.tabs({
         "전체 데이터 탐색": raw_browse,
@@ -229,9 +243,16 @@ def _(mo, raw_browse, raw_metadata, raw_sql_panel):
         "원본 열·출처": mo.vstack([
             mo.md("### 원본의 22개 열"),
             mo.ui.table(_schema, pagination=False, selection=None, show_download=False, show_column_summaries=False, show_data_types=False),
+            mo.md(f"추정연봉(원)은 고지금액 ÷ 가입자 수 ÷ {salary_policy['contribution_rate']*100:g}% × 12로 계산한 사업장 평균 대리값입니다. 실제 급여·실수령액과 다르며 개인별 연봉을 보여주지 않습니다."),
             mo.md(raw_metadata["publication_note"]), mo.md(raw_metadata["coverage_note"]), mo.md(raw_metadata["region_note"]),
-            mo.md(f"[원본 제공기관]({raw_metadata['source_url']}) · SHA256 `{raw_metadata['source_sha256']}`"),
-            mo.md(raw_metadata["verification"]),
+            mo.md(f"[제공기관: 국민연금공단]({raw_metadata['source_url']}) · 자료 기준월 **{', '.join(raw_metadata['periods'])}** · 원본 게시일 **{raw_metadata['source_published_at']}** · 데이터 수집일 **{raw_metadata['collected_at'].split('T')[0]}**"),
+            mo.accordion({"검증 정보": mo.vstack([
+                mo.md(raw_metadata["verification"]),
+                mo.ui.code_editor(json.dumps({
+                    "원본 파일 검증값(SHA256)": raw_metadata["source_sha256"],
+                    "조회 파일 검증값(SHA256)": raw_metadata["parquet_sha256"],
+                }, ensure_ascii=False, indent=2), language="json", disabled=True, min_height=150, max_height=260),
+            ], gap=1)}, lazy=True),
         ], gap=1),
     }, lazy=True)
 

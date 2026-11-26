@@ -34,14 +34,19 @@ async def _(Path, duckdb, json, mo, sys):
 
         _response = await pyfetch(str(_root / "metadata.json"))
         _parquet_response = await pyfetch(str(_root / "snapshot.parquet"))
-        if not _response.ok or not _parquet_response.ok:
+        _analytics_response = await pyfetch(str(_root / "analytics_metadata.json"))
+        if not _response.ok or not _parquet_response.ok or not _analytics_response.ok:
             raise RuntimeError("집계 데이터를 불러오지 못했습니다. 페이지를 새로고침해 주세요.")
         metadata = await _response.json()
+        analytics_metadata = await _analytics_response.json()
         _parquet_path = Path("workplaces.parquet")
         _parquet_path.write_bytes(await _parquet_response.bytes())
     else:
         metadata = json.loads((_root / "metadata.json").read_text(encoding="utf-8"))
         _parquet_path = _root / "snapshot.parquet"
+        analytics_metadata = json.loads((_root / "analytics_metadata.json").read_text(encoding="utf-8"))
+    if analytics_metadata["source_sha256"] != metadata["source_sha256"]:
+        raise RuntimeError("분석 자료의 기준이 서로 다릅니다. 페이지를 새로고침해 주세요.")
     connection = duckdb.connect(":memory:")
     connection.execute("CREATE TABLE workplaces AS SELECT * FROM read_parquet(?)", [str(_parquet_path)])
 
@@ -51,7 +56,56 @@ async def _(Path, duckdb, json, mo, sys):
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     source_rows = query_rows("SELECT DISTINCT region, status, kind, industry_code, industry FROM workplaces")
-    return connection, metadata, query_rows, source_rows
+    return analytics_metadata, connection, metadata, query_rows, source_rows
+
+
+@app.cell
+def _(analytics_metadata, mo):
+    analytics_load = mo.ui.run_button(label=f"추정 연봉·사업장 순위 불러오기 · {analytics_metadata['parquet_bytes']/1_000_000:,.1f}MB", kind="success", full_width=True)
+    return (analytics_load,)
+
+
+@app.cell
+async def _(Path, analytics_load, connection, mo, sys):
+    analytics_loaded = False
+    analytics_error = None
+    if analytics_load.value:
+        try:
+            _path = mo.notebook_location() / "public" / "data" / "analytics.parquet"
+            if sys.platform == "emscripten":
+                from pyodide.http import pyfetch as _pyfetch_analytics
+
+                _response = await _pyfetch_analytics(str(_path))
+                if not _response.ok:
+                    raise RuntimeError("사업장 분석 자료를 받지 못했습니다.")
+                _path = Path("analytics.parquet")
+                _path.write_bytes(await _response.bytes())
+            connection.execute("CREATE OR REPLACE TABLE businesses AS SELECT * FROM read_parquet(?)", [str(_path)])
+            analytics_loaded = True
+        except Exception as _error:
+            analytics_error = str(_error)
+    return analytics_error, analytics_loaded
+
+
+@app.cell
+def _(analytics_loaded, band_filter, connection, industry_filter, kind_filter, period_filter, region_filter, status_filter):
+    analytics_ready = False
+    if analytics_loaded:
+        _clauses = ["period = ?"]
+        _parameters = [period_filter.value]
+        for _column, _widget in [("region",region_filter),("status",status_filter),("kind",kind_filter),("industry_code",industry_filter),("size_band",band_filter)]:
+            if _widget.value != "전체":
+                _clauses.append(f"{_column} = ?")
+                _parameters.append(_widget.value)
+        connection.execute("CREATE OR REPLACE TEMP TABLE business_selection AS SELECT * FROM businesses WHERE " + " AND ".join(_clauses), _parameters)
+        analytics_ready = True
+    return (analytics_ready,)
+
+
+@app.cell
+def _(mo):
+    get_active_tab, set_active_tab = mo.state("현황 비교")
+    return get_active_tab, set_active_tab
 
 
 @app.cell
@@ -180,7 +234,7 @@ def _(band_filter, connection, industry_filter, kind_filter, perf_counter, perio
 
 
 @app.cell
-def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, kind_filter, metadata, mo, region_filter, status_filter, totals):
+def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, kind_filter, get_active_tab, metadata, mo, region_filter, status_filter, totals):
     _scopes = [
         "전국" if region_filter.value == "전체" else str(region_filter.value),
         "모든 가입 상태" if status_filter.value == "전체" else str(status_filter.value),
@@ -220,7 +274,7 @@ def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, ki
             _region_track += f'<span style="width:{_share}%;background:{_color}" title="{escape(_name)} {_share:.1f}%"></span>'
             _region_legend += f'<span><i style="background:{_color}"></i>{escape(_name)} {_share:.1f}%</span>'
     _region_summary = mo.Html(f'<div class="region-summary"><div><strong>가입자의 지역 구성</strong><small>현재 선택 범위의 가입자 합계</small></div><div><div class="region-track" role="img" aria-label="지역별 가입자 구성">{_region_track}</div><div class="region-legend">{_region_legend}</div></div></div>') if totals["subscribers"] else mo.Html("")
-    mo.vstack([
+    _summary = mo.vstack([
         mo.Html(f'<div class="scope-line"><div class="scope-chips"><span>분석 범위</span>{_scope_html}</div><span>공개 기록의 {_coverage:,.1f}% 선택 · SQL 조회 {filter_elapsed_ms:,.0f}ms</span></div>'),
         mo.Html(f'''<div class="metric-grid">
         <article class="metric-card" style="--metric-accent:#2563eb;--metric-tint:#edf3ff"><div class="metric-top"><span class="metric-label">사업장 수</span><span class="metric-icon">{_building}</span></div><div class="metric-value">{totals['workplaces']:,}<small>개</small></div><div class="metric-note">등록 {_registered_share:.1f}% · 원본 사업장 행 수</div><div class="metric-progress"><span style="width:{_registered_share}%;background:#2563eb"></span></div></article>
@@ -231,6 +285,12 @@ def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, ki
         _region_summary,
         mo.md("<small>공개 범위: 가입자 3인 이상 법인·10인 이상 개인(2025년 7월 이후). 탈퇴·0명 원본 행을 보존했으며 전체 고용 통계와 다릅니다.</small>"),
     ], gap=0.8)
+    if get_active_tab() == "종합 통계·추정 연봉":
+        _summary = mo.vstack([
+            mo.Html(f'<div class="scope-line"><div class="scope-chips"><span>분석 범위</span>{_scope_html}</div></div>'),
+            mo.md(f"<small>현재 탐색 범위의 원본 **{totals['workplaces']:,}개 사업장 · {totals['subscribers']:,}명** 중 아래 연봉 산출 조건을 적용합니다.</small>"),
+        ], gap=0.3)
+    _summary
 
 
 @app.cell
@@ -440,17 +500,263 @@ def _(connection, csv, io, mo, panel, perf_counter, sql_editor, sql_preset, tota
 @app.cell
 def _(json, metadata, mo, panel):
     source_detail = panel("출처와 집계 기준", mo.vstack([
-        mo.md(f"[국민연금공단 · 국민연금 가입 사업장 내역](https://www.data.go.kr/data/15083277/fileData.do) · 원본 게시 **{metadata['source_published_at']}** · 수집 **{metadata['collected_at']}**"),
+        mo.md(f"[제공기관: 국민연금공단]({metadata['source_url']}) · 자료 기준월 **{', '.join(metadata['periods'])}** · 원본 갱신일 **{metadata.get('source_modified_at', metadata['source_published_at'])}** · 데이터 수집일 **{metadata['collected_at'].split('T')[0]}**"),
         mo.md("이 페이지는 수집한 파일의 스냅샷입니다. 원본 제공기관의 다음 게시가 자동 반영되지는 않습니다."),
         mo.md("\n\n".join(metadata[key] for key in ["coverage_note","record_note","region_note","period_note","billing_note","flow_note"])),
-        mo.accordion({"원본 품질·검증 메타데이터": mo.ui.code_editor(json.dumps(metadata, ensure_ascii=False, indent=2), language="json", disabled=True, min_height=220, max_height=480)}, lazy=True),
+        mo.accordion({"검증 정보": mo.ui.code_editor(json.dumps(metadata, ensure_ascii=False, indent=2), language="json", disabled=True, min_height=220, max_height=480)}, lazy=True),
     ]))
     return (source_detail,)
 
 
 @app.cell
-def _(detail, marimo_demo, mo, overview, source_detail, sql_explorer):
-    mo.ui.tabs({"현황 비교":overview,"집계 데이터":detail,"SQL 탐색":sql_explorer,"마리모 기능 체험":marimo_demo,"출처·품질":source_detail}, lazy=True)
+def _(mo):
+    salary_min = mo.ui.slider(
+        start=5, stop=100, step=5, value=5, debounce=True, show_value=True,
+        include_input=True, full_width=True, label="추정 연봉 분석 대상 최소 가입자 수",
+    )
+    return (salary_min,)
+
+
+@app.cell
+def _(analytics_metadata, analytics_ready, connection, salary_min, totals):
+    _scope_dependency = totals
+    salary_stats = {
+        "workplaces": 0, "subscribers": 0, "billing": 0, "new": 0, "lost": 0,
+        "mean_annual": None, "median_annual": None, "weighted_mean_annual": None,
+        "above_cap_workplaces": 0, "subscribers_at_above_cap_workplaces": 0,
+        "flow_difference": 0,
+    }
+    salary_groups = []
+    salary_distribution = []
+    salary_bill_rank = []
+    salary_staff_rank = []
+    if analytics_ready:
+        def _records(_query, _parameters=None):
+            _cursor = connection.execute(_query, _parameters or [])
+            _columns = [column[0] for column in _cursor.description]
+            return [dict(zip(_columns, row)) for row in _cursor.fetchall()]
+
+        connection.execute(
+            "CREATE OR REPLACE TEMP TABLE salary_eligible AS "
+            "SELECT * FROM business_selection WHERE status = '등록' "
+            "AND salary_valid AND subscribers >= ?",
+            [int(salary_min.value)],
+        )
+        _rate = float(analytics_metadata["contribution_rate"])
+        salary_stats = _records(
+            "SELECT COUNT(*) AS workplaces, COALESCE(SUM(subscribers),0)::BIGINT AS subscribers, "
+            "COALESCE(SUM(billing),0)::BIGINT AS billing, COALESCE(SUM(new),0)::BIGINT AS new, "
+            "COALESCE(SUM(lost),0)::BIGINT AS lost, AVG(annual_salary_proxy) AS mean_annual, "
+            "MEDIAN(annual_salary_proxy) AS median_annual, "
+            "SUM(billing) * 12.0 / NULLIF(SUM(subscribers),0) / ? AS weighted_mean_annual, "
+            "COUNT(*) FILTER (WHERE estimate_flag) AS above_cap_workplaces, "
+            "COALESCE(SUM(subscribers) FILTER (WHERE estimate_flag),0)::BIGINT AS subscribers_at_above_cap_workplaces, "
+            "COALESCE(SUM(new-lost),0)::BIGINT AS flow_difference "
+            "FROM salary_eligible",
+            [_rate],
+        )[0]
+        salary_groups = _records(
+            "WITH size_order(salary_size, position) AS (VALUES "
+            "('소규모 (5~49인)',1),('중규모 (50~299인)',2),('대규모 (300인 이상)',3)), "
+            "summary AS (SELECT salary_size, COUNT(*) AS workplaces, SUM(subscribers)::BIGINT AS subscribers, "
+            "AVG(annual_salary_proxy) AS mean_annual, MEDIAN(annual_salary_proxy) AS median_annual "
+            "FROM salary_eligible GROUP BY salary_size) "
+            "SELECT size_order.salary_size, size_order.position, COALESCE(summary.workplaces,0)::BIGINT AS workplaces, "
+            "COALESCE(summary.subscribers,0)::BIGINT AS subscribers, summary.mean_annual, summary.median_annual "
+            "FROM size_order LEFT JOIN summary USING(salary_size) ORDER BY position"
+        )
+        if salary_stats["workplaces"]:
+            _maximum = connection.execute("SELECT MAX(annual_salary_proxy) FROM salary_eligible").fetchone()[0]
+            _last_bin = int(max(_maximum, analytics_metadata["annual_income_upper"]) // 2_500_000)
+            salary_distribution = _records(
+                "WITH counts AS ("
+                "SELECT '전체' AS series, FLOOR(annual_salary_proxy / 2500000)::INTEGER AS salary_bin, COUNT(*) AS workplaces "
+                "FROM salary_eligible GROUP BY salary_bin UNION ALL "
+                "SELECT salary_size AS series, FLOOR(annual_salary_proxy / 2500000)::INTEGER AS salary_bin, COUNT(*) AS workplaces "
+                "FROM salary_eligible GROUP BY salary_size, salary_bin), "
+                "sizes AS (SELECT series, SUM(workplaces) AS total FROM counts GROUP BY series), "
+                "bins AS (SELECT range AS salary_bin FROM range(?)) "
+                "SELECT sizes.series, bins.salary_bin, bins.salary_bin * 250 AS salary_lower, "
+                "(bins.salary_bin+1) * 250 AS salary_upper, (bins.salary_bin+0.5) * 250 AS salary_mid, "
+                "COALESCE(counts.workplaces,0)::BIGINT AS workplaces, "
+                "100.0 * COALESCE(counts.workplaces,0) / sizes.total AS percent "
+                "FROM sizes CROSS JOIN bins LEFT JOIN counts USING(series,salary_bin) "
+                "ORDER BY series, salary_bin",
+                [_last_bin + 1],
+            )
+            _rank_columns = (
+                "record_id, business_name, industry, region, subscribers, billing, annual_salary_proxy, "
+                "period, previous_period, previous_subscribers, previous_billing, match_status"
+            )
+            salary_bill_rank = _records("SELECT " + _rank_columns + " FROM salary_eligible ORDER BY billing DESC, subscribers DESC, record_id LIMIT 10")
+            salary_staff_rank = _records("SELECT " + _rank_columns + " FROM salary_eligible ORDER BY subscribers DESC, billing DESC, record_id LIMIT 10")
+    return salary_bill_rank, salary_distribution, salary_groups, salary_staff_rank, salary_stats
+
+
+@app.cell
+def _(
+    alt, analytics_metadata, analytics_ready, escape, mo, panel, salary_bill_rank,
+    salary_distribution, salary_groups, salary_min, salary_staff_rank, salary_stats,
+):
+    if not analytics_ready:
+        salary_view = mo.callout("추정 연봉·순위 분석 데이터를 불러오면 현재 탐색 조건에 맞는 종합 통계를 확인할 수 있습니다.", kind="neutral")
+    else:
+        def _salary_text(value):
+            return "—" if value is None else f"약 {value / 10_000:,.0f}만 원"
+
+        def _metric_card(label, value, note, color="var(--analysis-text)"):
+            _value_text = str(value)
+            _unit = "만 원" if _value_text.endswith("만 원") else (_value_text[-1] if _value_text.endswith(("개", "명")) else "")
+            _value_html = escape(_value_text[:-len(_unit)].rstrip()) + f'<small style="font-size:11px;font-weight:500;margin-left:3px;white-space:nowrap">{escape(_unit)}</small>' if _unit else escape(_value_text)
+            return (
+                '<article style="min-width:0;padding:15px 12px;background:var(--analysis-panel);border:1px solid var(--analysis-line);border-radius:10px">'
+                f'<div style="font-size:11px;color:var(--analysis-muted);line-height:1.6;min-height:34px">{escape(label)}</div>'
+                f'<div style="font-size:21px;font-weight:750;letter-spacing:-.5px;line-height:1.4;color:{color};font-variant-numeric:tabular-nums;overflow-wrap:anywhere">{_value_html}</div>'
+                f'<div style="font-size:10px;color:var(--analysis-muted);line-height:1.6;margin-top:7px">{escape(note)}</div></article>'
+            )
+
+        def _history_svg(row, measure):
+            _before = row.get("previous_" + measure)
+            _after = row[measure]
+            if row.get("match_status") != "matched" or _before is None:
+                return '<span style="font-size:10px;color:var(--analysis-muted)">비교 자료 없음</span>'
+            _maximum = max(float(_before), float(_after), 1.0) * 1.1
+            _y_before = 20 - 16 * float(_before) / _maximum
+            _y_after = 20 - 16 * float(_after) / _maximum
+            _difference = _after - _before
+            if measure == "billing":
+                _before_text = f"{_before / 100_000_000:,.1f}억 원"
+                _after_text = f"{_after / 100_000_000:,.1f}억 원"
+                _difference_text = f"{_difference / 100_000_000:+,.1f}억 원"
+            else:
+                _before_text, _after_text = f"{_before:,}명", f"{_after:,}명"
+                _difference_text = f"{_difference:+,}명"
+            _percent_text = f"{(_after / _before - 1) * 100:+.1f}%" if _before else "과거 값 0으로 비율 산출 불가"
+            _previous = str(row.get("previous_period") or "")
+            _current = str(row.get("period") or "")
+            _previous_month = _previous.split("-")[-1].lstrip("0") if _previous else "과거"
+            _description = escape(f"{_previous}: {_before_text} → {_current}: {_after_text}. 두 시점 관측값이며 월별 추세가 아닙니다.")
+            return (
+                f'<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap" title="{_description}">'
+                f'<svg width="70" height="24" viewBox="0 0 70 24" role="img" aria-label="{_description}"><title>{_description}</title>'
+                f'<line x1="5" y1="{_y_before:.3f}" x2="65" y2="{_y_after:.3f}" stroke="#607b89" stroke-width="1.8"/>'
+                f'<circle cx="5" cy="{_y_before:.3f}" r="2.4" fill="#607b89"/><circle cx="65" cy="{_y_after:.3f}" r="2.4" fill="#607b89"/></svg>'
+                f'<span style="font-size:10px;color:var(--analysis-muted)">{escape(_previous_month)}월 대비 {_percent_text} · {_difference_text}</span></span>'
+            )
+
+        def _rank_list(rows, measure):
+            _items = []
+            for _index, _row in enumerate(rows, start=1):
+                _value = f"{_row['billing'] / 100_000_000:,.1f}억 원" if measure == "billing" else f"{_row['subscribers']:,}명"
+                _exact = f"{_row[measure]:,}" + ("원" if measure == "billing" else "명")
+                _context = f"{_row['industry']} · {_row['region']} · {_row['subscribers']:,}명"
+                _items.append(
+                    '<div style="display:grid;grid-template-columns:23px minmax(0,1fr) 103px;gap:9px;padding:16px 0;border-top:1px solid var(--analysis-line);align-items:start">'
+                    f'<span style="font-size:16px;font-weight:700;color:var(--analysis-muted)">{_index}</span>'
+                    '<div style="min-width:0">'
+                    f'<div style="font-size:14px;font-weight:700;color:var(--analysis-text);line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{escape(_row["business_name"])}">{escape(_row["business_name"])}</div>'
+                    f'<div style="font-size:10px;color:var(--analysis-muted);line-height:1.6;margin:4px 0 3px;overflow-wrap:anywhere">{escape(_context)}</div>'
+                    + _history_svg(_row, measure) + '</div>'
+                    f'<div style="text-align:right;min-width:0"><div style="font-size:18px;color:#557e48;font-weight:750;line-height:1.6;letter-spacing:-.4px;overflow-wrap:anywhere" title="{_exact}">{_value}</div>'
+                    f'<div style="font-size:10px;color:var(--analysis-muted);margin-top:4px;line-height:1.6">추정 연봉<br>{_salary_text(_row["annual_salary_proxy"])}</div></div></div>'
+                )
+            return mo.Html('<div aria-label="상위 사업장 순위">' + "".join(_items) + '</div>')
+
+        _scope = f"왼쪽 탐색 조건 중 등록·가입자 {int(salary_min.value):,}명 이상·고지금액 양수 사업장만 분석합니다. 사업장은 원본의 행 단위입니다."
+        _control = mo.vstack([
+            mo.md("## 종합 통계·추정 연봉"),
+            mo.md(_scope),
+            salary_min,
+        ], gap=0.7)
+        if not salary_stats["workplaces"]:
+            salary_view = mo.vstack([_control, mo.callout("현재 조건에 맞는 연봉 산출 대상이 없습니다. 가입 상태·최소 가입자 수·지역 조건을 조정해 주세요.", kind="neutral")], gap=1)
+        else:
+            _flow = int(salary_stats["flow_difference"])
+            _stats_html = "".join([
+                _metric_card("분석 사업장", f"{salary_stats['workplaces']:,}개", "등록·최소 가입자 조건 적용"),
+                _metric_card("분석 가입자", f"{salary_stats['subscribers']:,}명", "대상 사업장의 가입자 합계"),
+                _metric_card("평균 추정 연봉", _salary_text(salary_stats["mean_annual"]), "사업장 동일가중 평균", "#557e48"),
+                _metric_card("중위 추정 연봉", _salary_text(salary_stats["median_annual"]), "사업장별 추정값의 중앙값", "#557e48"),
+                _metric_card("상한 초과 개인 인원", "산출 불가", "개인별 소득 정보 없음"),
+                _metric_card("역산평균 상한 초과 사업장", f"{salary_stats['above_cap_workplaces']:,}개", f"해당 사업장 가입자 {salary_stats['subscribers_at_above_cap_workplaces']:,}명"),
+                _metric_card("신규취득−상실 차이", f"{_flow:+,}명", "순고용 증감과 다름"),
+            ])
+            _statistics = mo.vstack([
+                mo.Html('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px">' + _stats_html + '</div>'),
+                mo.md(f"가입자 가중 평균 추정 연봉은 **{_salary_text(salary_stats['weighted_mean_annual'])}**입니다. 위 평균·중위값은 사업장 단위이며 개인 급여의 평균·중앙값과 다릅니다."),
+                mo.md("**개인별 상한 초과 인원은 이 자료로 확인할 수 없습니다.** 사업장 평균이 상한 이하이더라도 일부 가입자는 상한 이상의 소득을 받을 수 있습니다."),
+            ], gap=0.7)
+            _size_cards = []
+            for _group in salary_groups:
+                _size_cards.append(mo.vstack([
+                    mo.md(f"**{_group['salary_size']}**"),
+                    mo.Html(f'<div style="font-size:25px;font-weight:720;color:var(--analysis-text);font-variant-numeric:tabular-nums">{_salary_text(_group["mean_annual"])}</div>'),
+                    mo.md(f"{_group['workplaces']:,}개 사업장 · 가입자 {_group['subscribers']:,}명"),
+                ], gap=0.5).style({"background":"var(--analysis-panel)","padding":"16px","border":"1px solid var(--analysis-line)","border-radius":"10px","min-width":"155px"}))
+            _size_summary = panel("사업장 규모별 평균 추정 연봉", mo.hstack(_size_cards, widths="equal", wrap=True, gap=0.8), "전체 평균과 같은 사업장 동일가중 방식입니다. ‘—’는 산출 대상이 없음을 뜻합니다.")
+            _series = ["전체", "소규모 (5~49인)", "중규모 (50~299인)", "대규모 (300인 이상)"]
+            _series_colors = ["#5b8f4d", "#9a6c08", "#26704e", "#344968"]
+            _x = alt.X("salary_mid:Q", title="추정 연봉(만 원)", scale=alt.Scale(zero=True), axis=alt.Axis(format=",.0f", tickCount=5))
+            _y = alt.Y("percent:Q", title="사업장 비중(%)", scale=alt.Scale(zero=True), axis=alt.Axis(format=".1f"))
+            _whole = [row for row in salary_distribution if row["series"] == "전체"]
+            _area = alt.Chart(alt.Data(values=_whole)).mark_area(opacity=0.1, color=_series_colors[0]).encode(x=_x, y=_y)
+            _lines = alt.Chart(alt.Data(values=salary_distribution)).mark_line(strokeWidth=2).encode(
+                x=_x, y=_y,
+                color=alt.Color("series:N", title=None, sort=_series, scale=alt.Scale(domain=_series, range=_series_colors), legend=alt.Legend(orient="bottom", columns=2, labelLimit=110, labelExpr="split(datum.label, ' ')[0]")),
+                strokeDash=alt.StrokeDash("series:N", scale=alt.Scale(domain=_series, range=[[1,0],[5,3],[3,2],[8,3]]), legend=None),
+                tooltip=[alt.Tooltip("series:N", title="규모"), alt.Tooltip("salary_lower:Q", title="구간 하한(만 원)", format=","), alt.Tooltip("salary_upper:Q", title="구간 상한(만 원)", format=","), alt.Tooltip("workplaces:Q", title="사업장 수", format=","), alt.Tooltip("percent:Q", title="규모 내 비중(%)", format=".2f")],
+            )
+            _cap = alt.Chart(alt.Data(values=[{"cap": analytics_metadata["annual_income_upper"] / 10_000, "label":"기준소득 연환산 상한"}])).mark_rule(strokeDash=[4,4], color="#94a3b8").encode(x="cap:Q", tooltip=[alt.Tooltip("cap:Q", title="연환산 상한(만 원)", format=","), alt.Tooltip("label:N", title="구분")])
+            _distribution_chart = (_area + _lines + _cap).properties(height=300, width="container", autosize=alt.AutoSizeParams(type="fit", contains="padding", resize=True)).configure_view(stroke=None).configure_axis(labelFontSize=11, titleFontSize=11, gridColor="#e7ecf3")
+            _size_chart = alt.Chart(alt.Data(values=salary_groups)).mark_bar(cornerRadiusEnd=4).encode(
+                x=alt.X("salary_size:N", sort=_series[1:], title=None, axis=alt.Axis(labelAngle=0, labelLimit=80, labelFontSize=11, labelExpr="split(datum.label, ' ')[0]")),
+                y=alt.Y("subscribers:Q", title="가입자 수(명)", scale=alt.Scale(zero=True), axis=alt.Axis(format=",~s")),
+                color=alt.Color("salary_size:N", scale=alt.Scale(domain=_series[1:], range=_series_colors[1:]), legend=None),
+                tooltip=[alt.Tooltip("salary_size:N", title="규모"), alt.Tooltip("workplaces:Q", title="사업장 수", format=","), alt.Tooltip("subscribers:Q", title="가입자 수(명)", format=","), alt.Tooltip("mean_annual:Q", title="사업장 평균 추정 연봉(원)", format=",.0f")],
+            ).properties(height=300, width="container", autosize=alt.AutoSizeParams(type="fit", contains="padding", resize=True)).configure_view(stroke=None).configure_axis(labelFontSize=11, titleFontSize=11, gridColor="#e7ecf3")
+            _charts = mo.hstack([
+                panel("추정 연봉 분포", mo.ui.altair_chart(_distribution_chart, chart_selection=False, legend_selection=False), "250만 원 구간별 사업장 비중입니다. 개인 급여 분포가 아닙니다.").style({"min-width":"min(100%, 300px)","flex":"1 1 300px"}),
+                panel("규모별 가입자 수", mo.ui.altair_chart(_size_chart, chart_selection=False, legend_selection=False), "같은 분석 대상의 가입자 합계입니다.").style({"min-width":"min(100%, 300px)","flex":"1 1 300px"}),
+            ], wrap=True, align="start", gap=1)
+            _rankings = mo.hstack([
+                panel("당월 고지금액 상위 10개 사업장", _rank_list(salary_bill_rank, "billing"), "현재 연봉 분석 대상에서 원본 사업장별로 순위를 계산합니다."),
+                panel("가입자 수 상위 10개 사업장", _rank_list(salary_staff_rank, "subscribers"), "개별 사업장 기준이며 같은 법인의 모든 지점을 합산하지 않습니다."),
+            ], widths="equal", wrap=True, align="start", gap=1)
+            _rate_pct = float(analytics_metadata["contribution_rate"]) * 100
+            _monthly_cap = float(analytics_metadata["monthly_income_upper"])
+            _annual_cap = float(analytics_metadata["annual_income_upper"])
+            _method = mo.accordion({"추정 연봉 산출 방법": mo.vstack([
+                mo.md(f"**추정 연봉 = 당월 고지금액 ÷ 가입자 수 ÷ {_rate_pct:g}% × 12**"),
+                mo.md(f"2026년 총 보험료율 **{_rate_pct:g}%**를 적용합니다. 사업주와 근로자가 각각 절반을 부담하므로 한쪽 부담률만 사용하지 않습니다. 자료 기준월의 기준소득월액 상한은 **{_monthly_cap / 10_000:,.0f}만 원**, 연환산 상한은 **{_annual_cap / 10_000:,.0f}만 원**입니다."),
+                mo.md(analytics_metadata["salary_note"]),
+                mo.md("평균은 사업장별 추정 연봉의 단순평균, 중위값은 그 추정값의 중앙값입니다. 가입자 가중 평균은 대상 고지금액 합계 ÷ 가입자 합계 ÷ 보험료율 × 12로 별도 계산합니다. 규모별 평균도 사업장 동일가중입니다."),
+                mo.md(analytics_metadata["cap_definition"]),
+                mo.md("신규취득에는 납부재개, 상실에는 납부예외가 포함되므로 둘의 차이는 순고용 증감을 뜻하지 않습니다."),
+                mo.md(analytics_metadata["history_note"]),
+                mo.md("두 시점 사이 기준소득월액 상한이 637만 원에서 659만 원으로 바뀌었습니다. 고지금액 증가는 급여 상승과 같지 않으며 월별 연속 증가를 추정하지 않습니다."),
+                mo.md("[국민연금공단 보험료 산정 기준](https://www.nps.or.kr/pnsinfo/ntpsklg/getOHAF0038M0.do) · [국민연금공단 보험료율 개편](https://www.nps.or.kr/pnsinfo/ntpsklg/getOHAF0104M0.do)"),
+            ], gap=0.7)}, lazy=True)
+            salary_view = mo.vstack([
+                _control,
+                mo.callout("국민연금 고지금액으로 역산한 기준소득의 연환산 대리값입니다. 실제 연봉·실수령액과 다르며, 상한의 영향으로 고소득을 낮게 추정할 수 있습니다.", kind="neutral"),
+                _statistics, _size_summary, _charts, _rankings,
+                mo.md("작은 비교선은 2026년 6월과 10월의 실제 관측값 두 개만 연결합니다. 비교 가능한 과거 행이 없으면 선을 그리지 않습니다."),
+                _method,
+            ], gap=1)
+    return (salary_view,)
+
+
+@app.cell
+def _(analytics_error, analytics_load, analytics_ready, detail, get_active_tab, marimo_demo, mo, overview, salary_view, set_active_tab, source_detail, sql_explorer):
+    _salary_content = salary_view if analytics_ready else mo.vstack([
+        mo.md("## 종합 통계·추정 연봉"),
+        mo.md("등록·가입자 5명 이상·고지금액 양수인 사업장의 추정 연봉, 규모별 분포와 상위 사업장을 확인합니다. 왼쪽 탐색 조건도 적용됩니다."),
+        analytics_load,
+        mo.callout(analytics_error, kind="warn") if analytics_error else mo.md("사업장별 분석 자료는 버튼을 누를 때 한 번 받습니다. 추정 연봉은 실제 연봉·실수령액과 다르며, 산출 방법을 함께 제공합니다."),
+    ], gap=1)
+    main_tabs = mo.ui.tabs({"현황 비교":overview,"종합 통계·추정 연봉":_salary_content,"집계 데이터":detail,"SQL 탐색":sql_explorer,"마리모 기능 체험":marimo_demo,"출처·품질":source_detail}, value=get_active_tab(), on_change=set_active_tab, lazy=True)
+    main_tabs
+    return (main_tabs,)
 
 
 if __name__ == "__main__":

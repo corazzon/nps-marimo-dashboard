@@ -53,7 +53,7 @@ def export_notebook(notebook: Path, output: Path, mode: str, *, raw_data: bool =
     if not (output / "public" / "data" / data_file).is_file():
         raise SystemExit(f"{mode} 화면의 집계 데이터가 누락되었습니다.")
     excluded_files = (
-        ["snapshot.json", "snapshot.json.gz", "snapshot.parquet", "metadata.json"]
+        ["snapshot.json", "snapshot.json.gz", "snapshot.parquet", "metadata.json", "analytics.parquet"]
         if raw_data else ["snapshot.json", "raw.parquet", "raw_metadata.json"]
     )
     for filename in excluded_files:
@@ -116,6 +116,20 @@ def main() -> None:
                 raise SystemExit("전체 데이터 파일의 SHA256이 기록과 다릅니다.")
         if raw_metadata["source_sha256"] != snapshot["metadata"]["source_sha256"]:
             raise SystemExit("전체 데이터와 요약 집계가 서로 다른 원본에서 생성되었습니다.")
+    analytics_path = folder / "public" / "data" / "analytics.parquet"
+    analytics_metadata = json.loads(analytics_path.with_name("analytics_metadata.json").read_text(encoding="utf-8"))
+    with analytics_path.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != analytics_metadata["parquet_sha256"]:
+            raise SystemExit("사업장 분석 자료의 파일 검증값이 다릅니다.")
+    if analytics_path.stat().st_size != analytics_metadata["parquet_bytes"]:
+        raise SystemExit("사업장 분석 자료의 파일 크기가 다릅니다.")
+    if analytics_metadata["source_sha256"] != snapshot["metadata"]["source_sha256"]:
+        raise SystemExit("추정 연봉 분석과 요약 자료의 원본이 서로 다릅니다.")
+    with duckdb.connect() as connection:
+        metrics = list(analytics_metadata["totals"])
+        values = connection.execute("SELECT COUNT(*), SUM(subscribers), SUM(billing), SUM(new), SUM(lost) FROM read_parquet(?)", [str(analytics_path)]).fetchone()
+        if dict(zip(["workplaces", "subscribers", "billing", "new", "lost"], values)) != snapshot["metadata"]["totals"]:
+            raise SystemExit("추정 연봉 분석의 전체 행·지표 합계가 원본과 다릅니다.")
     for filename in ("app.py", "explorer.py"):
         subprocess.run(
             [sys.executable, "-m", "marimo", "check", str(folder / filename)],

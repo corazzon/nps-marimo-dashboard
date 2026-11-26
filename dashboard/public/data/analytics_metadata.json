@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "title": "국민연금 사업장 추정 연봉·순위 분석",
+  "periods": [
+    "2026-10"
+  ],
+  "source_url": "https://www.data.go.kr/data/15083277/fileData.do",
+  "source_file": "data/nps_workplaces_20261123.csv",
+  "source_sha256": "0b0d09d958f558a5ef2989aff2ff06524b248b072a4eacd3c51989c109f7cf62",
+  "source_published_at": "2026-11-23",
+  "collected_at": "2026-11-26T13:01:19+09:00",
+  "row_count": 588075,
+  "columns": [
+    {
+      "name": "record_id",
+      "type": "BIGINT"
+    },
+    {
+      "name": "period",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "region",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "status",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "kind",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "industry_code",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "industry",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "size_band",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "business_name",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "registration_prefix",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "location_code",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "subscribers",
+      "type": "BIGINT"
+    },
+    {
+      "name": "billing",
+      "type": "BIGINT"
+    },
+    {
+      "name": "new",
+      "type": "BIGINT"
+    },
+    {
+      "name": "lost",
+      "type": "BIGINT"
+    },
+    {
+      "name": "monthly_income_proxy",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "annual_salary_proxy",
+      "type": "DOUBLE"
+    },
+    {
+      "name": "salary_valid",
+      "type": "BOOLEAN"
+    },
+    {
+      "name": "estimate_flag",
+      "type": "BOOLEAN"
+    },
+    {
+      "name": "salary_size",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "previous_period",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "previous_subscribers",
+      "type": "BIGINT"
+    },
+    {
+      "name": "previous_billing",
+      "type": "BIGINT"
+    },
+    {
+      "name": "match_status",
+      "type": "VARCHAR"
+    }
+  ],
+  "totals": {
+    "workplaces": 588075,
+    "subscribers": 11597244,
+    "billing": 4381395703220,
+    "new": 448834,
+    "lost": 363705
+  },
+  "default_summary": {
+    "workplaces": 378211,
+    "subscribers": 10995424,
+    "billing": 4200703780000,
+    "new": 419648,
+    "lost": 330507,
+    "weighted_mean_annual": 48257822.009936996,
+    "business_mean_annual": 40571011.87229225,
+    "business_median_annual": 39933473.684210524,
+    "above_cap_workplaces": 0,
+    "subscribers_at_above_cap_workplaces": 0
+  },
+  "default_size_summary": [
+    {
+      "salary_size": "소규모 (5~49인)",
+      "workplaces": 349572,
+      "subscribers": 4501456,
+      "billing": 1450323811900,
+      "weighted_mean_annual": 40697675.883676656,
+      "business_median_annual": 39498442.10526316
+    },
+    {
+      "salary_size": "중규모 (50~299인)",
+      "workplaces": 25259,
+      "subscribers": 2639872,
+      "billing": 988514518060,
+      "weighted_mean_annual": 47299638.67753716,
+      "business_median_annual": 45787442.7244582
+    },
+    {
+      "salary_size": "대규모 (300인 이상)",
+      "workplaces": 3380,
+      "subscribers": 3854096,
+      "billing": 1761865450040,
+      "weighted_mean_annual": 57744131.24847189,
+      "business_median_annual": 55351436.293484196
+    }
+  ],
+  "contribution_rate": 0.095,
+  "monthly_income_lower": 410000,
+  "monthly_income_upper": 6590000,
+  "annual_income_upper": 79080000,
+  "policy_period": "2026-07 ~ 2027-06",
+  "sources": [
+    {
+      "title": "국민연금공단 연금개혁 안내",
+      "url": "https://www.nps.or.kr/pnsinfo/ntpsklg/getOHAF0104M0.do"
+    },
+    {
+      "title": "국민연금공단 2026년 7월 기준소득월액 안내",
+      "url": "https://www.npsonair.kr/advantages/detail.html?strIdx=3923&strPage=1"
+    }
+  ],
+  "formula": "추정 연봉 = 당월 고지금액 ÷ 가입자 수 ÷ 0.095 × 12",
+  "default_population": "등록 상태이며 가입자 5명 이상, 가입자 수와 당월 고지금액이 모두 양수인 원본 사업장 행",
+  "mean_definition": "가입자가중 평균은 대상 사업장 고지금액 합계 ÷ 대상 가입자 합계 ÷ 보험료율 × 12입니다. 사업장 단순평균과 구분합니다.",
+  "median_definition": "중위값은 사업장별 추정 평균 연봉의 중앙값입니다. 개인 가입자 연봉의 중앙값을 알 수 있다는 의미가 아닙니다.",
+  "cap_definition": "estimate_flag는 사업장 평균 역산 월소득이 659만원을 초과하는지 표시합니다. 개별 가입자의 실제 상한 초과 여부나 상한 초과 인원은 이 자료로 식별할 수 없습니다.",
+  "salary_note": "국민연금 기준소득월액을 연환산한 대리값으로 실제 연봉·성과급·비과세 수당·실수령액과 다릅니다. 기준소득월액 상한에 따라 고소득이 과소추정될 수 있고 신고 시차·정산의 영향이 있습니다. 상한 초과 역산값을 임의 보정하지 않습니다.",
+  "history": {
+    "period": "2026-06",
+    "published_at": "2026-07-23",
+    "source_sha256": "2aac48ef155d268d544eb8a5ba04cca201a1e1806a847c5772307775b4657f2b",
+    "source_file": "data/nps_workplaces_20260723.csv",
+    "monthly_income_upper": 6370000,
+    "contribution_rate": 0.095
+  },
+  "history_match_counts": {
+    "ambiguous_current": 340,
+    "ambiguous_previous": 6,
+    "matched": 505095,
+    "not_found": 82634
+  },
+  "history_note": "2026년 6월과 10월 두 시점만 비교합니다. 사업장명·축약 등록번호·법정동코드·형태가 각 원본에서 유일하게 일치한 경우에만 과거 값을 연결했습니다. 월별 연속 증가나 같은 법인의 전체 사업장 추세를 의미하지 않습니다.",
+  "match_status_labels": {
+    "matched": "두 시점 유일 일치",
+    "missing_identifier": "연결 식별값 부족",
+    "ambiguous_current": "현재 복합키 중복",
+    "ambiguous_previous": "과거 복합키 중복",
+    "not_found": "일치하는 과거 행 없음"
+  },
+  "record_note": "사업장 수는 원본 행 수이며 사업자등록번호는 축약되어 있어 고유 기업 수를 별도로 추정하지 않습니다.",
+  "parquet_bytes": 18959279,
+  "parquet_sha256": "7ba2209d151adc0c000732cfab73d407ff487f83f300177d0a9e9bb793a7672e",
+  "verification": "독립 CSV 순회 5지표 합계·원본 SHA256·기존 집계의 모든 7차원 합계·연결 후 행 수와 고유 record_id·저장된 Parquet 행 수를 검증했습니다.",
+  "prepared_at": "2026-11-26T15:08:23+09:00",
+  "supported_estimation_period": "2026-07 ~ 2026-12",
+  "rate_policy_note": "현재 9.5% 보험료율은 2026년 적용 기준입니다. 2027년부터 10%로 달라지므로 지원 범위 밖 기준월은 생성 단계에서 중단합니다."
+}
