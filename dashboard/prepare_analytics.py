@@ -190,6 +190,19 @@ def prepare(raw: Path, metadata_path: Path, output: Path, history: Path | None, 
                 MEDIAN(annual_salary_proxy) AS business_median_annual
             FROM analytics WHERE status='등록' AND subscribers>=5 AND salary_valid GROUP BY salary_size ORDER BY MIN(subscribers)
         """)
+        _percentiles = rows(connection,"""
+            SELECT QUANTILE_CONT(subscribers,0.999) AS subscribers,
+                QUANTILE_CONT(billing,0.999) AS billing,
+                QUANTILE_CONT(new,0.999) AS new,
+                QUANTILE_CONT(lost,0.999) AS lost
+            FROM analytics
+        """)[0]
+        numeric_filter_bounds = {
+            "subscribers": {"minimum":0,"maximum":max(1_500, int((_percentiles["subscribers"]+499)//500*500)),"step":10,"unit":"명","divisor":1,"open_ended_max":True},
+            "billing": {"minimum":0,"maximum":max(10, int(_percentiles["billing"]//100_000_000+1)),"step":0.1,"unit":"억 원","divisor":100_000_000,"open_ended_max":True},
+            "new": {"minimum":0,"maximum":max(100, int((_percentiles["new"]+9)//10*10)),"step":1,"unit":"명","divisor":1,"open_ended_max":True},
+            "lost": {"minimum":0,"maximum":max(100, int((_percentiles["lost"]+9)//10*10)),"step":1,"unit":"명","divisor":1,"open_ended_max":True},
+        }
         match_counts = {name:value for name,value in connection.execute("SELECT match_status,count(*) FROM analytics GROUP BY match_status").fetchall()}
         connection.execute("COPY (SELECT * FROM analytics ORDER BY region,industry_code,kind,status,size_band,business_name) TO ? (FORMAT PARQUET,COMPRESSION ZSTD,COMPRESSION_LEVEL 15,ROW_GROUP_SIZE 500000)",[str(output)])
         schema = [{"name":r[0],"type":r[1]} for r in connection.execute("DESCRIBE SELECT * FROM read_parquet(?)",[str(output)]).fetchall()]
@@ -202,6 +215,7 @@ def prepare(raw: Path, metadata_path: Path, output: Path, history: Path | None, 
         "source_url":metadata["source_url"],"source_file":metadata["source_file"],"source_sha256":metadata["source_sha256"],
         "source_published_at":metadata["source_published_at"],"collected_at":metadata["collected_at"],
         "row_count":written,"columns":schema,"totals":totals,"default_summary":default_summary,"default_size_summary":size_summary,
+        "numeric_filter_bounds":numeric_filter_bounds,
         "contribution_rate":0.095,"monthly_income_lower":410_000,"monthly_income_upper":MONTHLY_UPPER,
         "annual_income_upper":MONTHLY_UPPER*12,"policy_period":"2026-07 ~ 2027-06",
         "supported_estimation_period":"2026-07 ~ 2026-12","rate_policy_note":"현재 9.5% 보험료율은 2026년 적용 기준입니다. 2027년부터 10%로 달라지므로 지원 범위 밖 기준월은 생성 단계에서 중단합니다.","sources":SOURCES,

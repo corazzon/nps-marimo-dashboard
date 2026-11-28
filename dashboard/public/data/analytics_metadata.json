@@ -153,11 +153,47 @@
       "business_median_annual": 55351436.293484196
     }
   ],
+  "numeric_filter_bounds": {
+    "subscribers": {
+      "minimum": 0,
+      "maximum": 1500,
+      "step": 10,
+      "unit": "명",
+      "divisor": 1,
+      "open_ended_max": true
+    },
+    "billing": {
+      "minimum": 0,
+      "maximum": 10,
+      "step": 0.1,
+      "unit": "억 원",
+      "divisor": 100000000,
+      "open_ended_max": true
+    },
+    "new": {
+      "minimum": 0,
+      "maximum": 100,
+      "step": 1,
+      "unit": "명",
+      "divisor": 1,
+      "open_ended_max": true
+    },
+    "lost": {
+      "minimum": 0,
+      "maximum": 100,
+      "step": 1,
+      "unit": "명",
+      "divisor": 1,
+      "open_ended_max": true
+    }
+  },
   "contribution_rate": 0.095,
   "monthly_income_lower": 410000,
   "monthly_income_upper": 6590000,
   "annual_income_upper": 79080000,
   "policy_period": "2026-07 ~ 2027-06",
+  "supported_estimation_period": "2026-07 ~ 2026-12",
+  "rate_policy_note": "현재 9.5% 보험료율은 2026년 적용 기준입니다. 2027년부터 10%로 달라지므로 지원 범위 밖 기준월은 생성 단계에서 중단합니다.",
   "sources": [
     {
       "title": "국민연금공단 연금개혁 안내",
@@ -184,9 +220,9 @@
   },
   "history_match_counts": {
     "ambiguous_current": 340,
+    "not_found": 82634,
     "ambiguous_previous": 6,
-    "matched": 505095,
-    "not_found": 82634
+    "matched": 505095
   },
   "history_note": "2026년 6월과 10월 두 시점만 비교합니다. 사업장명·축약 등록번호·법정동코드·형태가 각 원본에서 유일하게 일치한 경우에만 과거 값을 연결했습니다. 월별 연속 증가나 같은 법인의 전체 사업장 추세를 의미하지 않습니다.",
   "match_status_labels": {
@@ -197,10 +233,8 @@
     "not_found": "일치하는 과거 행 없음"
   },
   "record_note": "사업장 수는 원본 행 수이며 사업자등록번호는 축약되어 있어 고유 기업 수를 별도로 추정하지 않습니다.",
-  "parquet_bytes": 18959279,
-  "parquet_sha256": "7ba2209d151adc0c000732cfab73d407ff487f83f300177d0a9e9bb793a7672e",
+  "parquet_bytes": 18959024,
+  "parquet_sha256": "8da3ba9fbe51ab23035f5532946fd04b1db07bbfac27cd788e4afbd0b52fc78d",
   "verification": "독립 CSV 순회 5지표 합계·원본 SHA256·기존 집계의 모든 7차원 합계·연결 후 행 수와 고유 record_id·저장된 Parquet 행 수를 검증했습니다.",
-  "prepared_at": "2026-11-26T15:08:23+09:00",
-  "supported_estimation_period": "2026-07 ~ 2026-12",
-  "rate_policy_note": "현재 9.5% 보험료율은 2026년 적용 기준입니다. 2027년부터 10%로 달라지므로 지원 범위 밖 기준월은 생성 단계에서 중단합니다."
+  "prepared_at": "2026-11-28T16:28:48+09:00"
 }

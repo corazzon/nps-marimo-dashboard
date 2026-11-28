@@ -28,6 +28,7 @@ class AnalyticsTest(unittest.TestCase):
         cls.eligible_totals = Counter()
         cls.eligible_estimates = []
         cls.above_cap_count = 0
+        cls.range_totals = Counter({"workplaces": 0, "subscribers": 0, "billing": 0, "new": 0, "lost": 0})
         if cls.source.exists():
             with cls.source.open(encoding="cp949", newline="") as stream:
                 for row in csv.DictReader(stream):
@@ -36,6 +37,8 @@ class AnalyticsTest(unittest.TestCase):
                     values = {"workplaces": 1, "subscribers": subscribers, "billing": billing,
                               "new": int(row["신규취득자수"]), "lost": int(row["상실가입자수"])}
                     cls.expected_totals.update(values)
+                    if 10 <= subscribers <= 50 and billing <= 100_000_000 and values["new"] <= 5 and values["lost"] <= 5:
+                        cls.range_totals.update(values)
                     if row["사업장가입상태코드 1 등록 2 탈퇴"] == "1" and subscribers >= 5 and billing > 0:
                         cls.eligible_totals.update(values)
                         cls.eligible_estimates.append(billing / subscribers / 0.095 * 12)
@@ -126,6 +129,29 @@ class AnalyticsTest(unittest.TestCase):
                     actual[key] = (int(row["가입자수"]), int(row["당월고지금액"]))
         self.assertEqual(actual, expected)
         self.assertTrue(all(value == 1 for value in found_counts.values()))
+
+    def test_numeric_range_filter_matches_independent_csv(self):
+        if not self.source.exists():
+            self.skipTest("원본 CSV가 없어 수치 범위 필터의 독립 대조를 생략합니다.")
+        values = self.connection.execute(
+            "SELECT COUNT(*),SUM(subscribers),SUM(billing),SUM(new),SUM(lost) FROM analytics "
+            "WHERE subscribers BETWEEN 10 AND 50 AND billing<=100000000 AND new<=5 AND lost<=5"
+        ).fetchone()
+        actual = dict(zip(["workplaces", "subscribers", "billing", "new", "lost"], values))
+        self.assertEqual(actual, dict(self.range_totals))
+
+    def test_numeric_slider_upper_bounds_are_open_ended(self):
+        bounds = self.metadata["numeric_filter_bounds"]
+        for metric in ["subscribers", "billing", "new", "lost"]:
+            with self.subTest(지표=metric):
+                bound = bounds[metric]
+                sentinel = bound["maximum"] * bound["divisor"]
+                percentile, maximum = self.connection.execute(
+                    f"SELECT QUANTILE_CONT({metric},0.999),MAX({metric}) FROM analytics"
+                ).fetchone()
+                self.assertTrue(bound["open_ended_max"])
+                self.assertGreaterEqual(sentinel, percentile)
+                self.assertGreater(maximum, sentinel)
 
 
 if __name__ == "__main__":

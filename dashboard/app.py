@@ -60,35 +60,43 @@ async def _(Path, duckdb, json, mo, sys):
 
 
 @app.cell
-def _(analytics_metadata, mo):
-    analytics_load = mo.ui.run_button(label=f"추정 연봉·사업장 순위 불러오기 · {analytics_metadata['parquet_bytes']/1_000_000:,.1f}MB", kind="success", full_width=True)
-    return (analytics_load,)
+def _(mo):
+    analytics_retry = mo.ui.run_button(label="사업장 분석 자료 다시 불러오기", kind="warn", full_width=True)
+    business_retry = mo.ui.run_button(label="사업장 분석 자료 다시 불러오기", kind="warn", full_width=True)
+    numeric_retry = mo.ui.run_button(label="수치 범위 분석 자료 다시 불러오기", kind="warn", full_width=True)
+    return analytics_retry, business_retry, numeric_retry
 
 
 @app.cell
-async def _(Path, analytics_load, business_search, connection, mo, sys):
+async def _(Path, analytics_metadata, analytics_retry, business_retry, business_search, connection, get_active_tab, mo, numeric_filters_active, numeric_retry, sys):
     analytics_loaded = bool(connection.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name='businesses'").fetchone()[0])
     analytics_error = None
-    if (analytics_load.value or bool((business_search.value or "").strip())) and not analytics_loaded:
+    _automatic_tab = get_active_tab() in ("종합 통계·추정 연봉", "사업장 상세")
+    _load_requested = _automatic_tab or numeric_filters_active or bool((business_search.value or "").strip()) or analytics_retry.value or business_retry.value or numeric_retry.value
+    if _load_requested and not analytics_loaded:
         try:
-            _path = mo.notebook_location() / "public" / "data" / "analytics.parquet"
-            if sys.platform == "emscripten":
-                from pyodide.http import pyfetch as _pyfetch_analytics
+            with mo.status.spinner(
+                title="사업장 분석 자료를 준비하고 있습니다",
+                subtitle=f"최초 1회 약 {analytics_metadata['parquet_bytes']/1_000_000:,.1f}MB를 받아 브라우저 DuckDB에서 계산합니다.",
+            ):
+                _path = mo.notebook_location() / "public" / "data" / "analytics.parquet"
+                if sys.platform == "emscripten":
+                    from pyodide.http import pyfetch as _pyfetch_analytics
 
-                _response = await _pyfetch_analytics(str(_path))
-                if not _response.ok:
-                    raise RuntimeError("사업장 분석 자료를 받지 못했습니다.")
-                _path = Path("analytics.parquet")
-                _path.write_bytes(await _response.bytes())
-            connection.execute("CREATE OR REPLACE TABLE businesses AS SELECT * FROM read_parquet(?)", [str(_path)])
-            analytics_loaded = True
-        except Exception as _error:
-            analytics_error = str(_error)
+                    _response = await _pyfetch_analytics(str(_path))
+                    if not _response.ok:
+                        raise RuntimeError("사업장 분석 자료를 받지 못했습니다.")
+                    _path = Path("analytics.parquet")
+                    _path.write_bytes(await _response.bytes())
+                connection.execute("CREATE OR REPLACE TABLE businesses AS SELECT * FROM read_parquet(?)", [str(_path)])
+                analytics_loaded = True
+        except Exception:
+            analytics_error = "사업장 분석 자료를 불러오지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요."
     return analytics_error, analytics_loaded
 
 
 @app.cell
-def _(analytics_loaded, band_filter, connection, industry_filter, kind_filter, period_filter, region_filter, status_filter):
+def _(analytics_loaded, band_filter, connection, industry_filter, kind_filter, numeric_filter_clauses, numeric_filter_parameters, period_filter, region_filter, status_filter):
     analytics_ready = False
     if analytics_loaded:
         _clauses = ["period = ?"]
@@ -97,6 +105,8 @@ def _(analytics_loaded, band_filter, connection, industry_filter, kind_filter, p
             if _widget.value != "전체":
                 _clauses.append(f"{_column} = ?")
                 _parameters.append(_widget.value)
+        _clauses.extend(numeric_filter_clauses)
+        _parameters.extend(numeric_filter_parameters)
         connection.execute("CREATE OR REPLACE TEMP TABLE business_selection AS SELECT * FROM businesses WHERE " + " AND ".join(_clauses), _parameters)
         analytics_ready = True
     return (analytics_ready,)
@@ -170,7 +180,7 @@ def _(mo):
 
 
 @app.cell
-def _(metadata, mo, reset_button, source_rows):
+def _(analytics_metadata, metadata, mo, reset_button, source_rows):
     _reset = reset_button.value
     period_filter = mo.ui.dropdown(metadata["periods"], value=metadata["periods"][-1], label="자료 기준월", full_width=True)
     region_filter = mo.ui.dropdown(["전체", *sorted({r["region"] for r in source_rows})], value="전체", label="지역 · 원본 표기", searchable=True, full_width=True)
@@ -180,6 +190,23 @@ def _(metadata, mo, reset_button, source_rows):
     industry_options.update({f"{r['industry']} [{r['industry_code']}]": r["industry_code"] for r in sorted(source_rows, key=lambda r: (r["industry"], r["industry_code"]))})
     industry_filter = mo.ui.dropdown(industry_options, value="전체", label="업종 · 전체 업종 검색", searchable=True, full_width=True)
     band_filter = mo.ui.dropdown(["전체", *metadata["size_bands"]], value="전체", label="사업장 가입자 규모", full_width=True)
+    _bounds = analytics_metadata["numeric_filter_bounds"]
+    subscriber_range = mo.ui.range_slider(
+        start=_bounds["subscribers"]["minimum"], stop=_bounds["subscribers"]["maximum"], step=_bounds["subscribers"]["step"],
+        value=[_bounds["subscribers"]["minimum"], _bounds["subscribers"]["maximum"]], label="사업장별 가입자 수 범위(명)", show_value=True, full_width=True,
+    )
+    billing_range = mo.ui.range_slider(
+        start=_bounds["billing"]["minimum"], stop=_bounds["billing"]["maximum"], step=_bounds["billing"]["step"],
+        value=[_bounds["billing"]["minimum"], _bounds["billing"]["maximum"]], label="사업장별 당월 고지금액 범위(억 원)", show_value=True, full_width=True,
+    )
+    new_range = mo.ui.range_slider(
+        start=_bounds["new"]["minimum"], stop=_bounds["new"]["maximum"], step=_bounds["new"]["step"],
+        value=[_bounds["new"]["minimum"], _bounds["new"]["maximum"]], label="사업장별 신규취득자 수 범위(명)", show_value=True, full_width=True,
+    )
+    lost_range = mo.ui.range_slider(
+        start=_bounds["lost"]["minimum"], stop=_bounds["lost"]["maximum"], step=_bounds["lost"]["step"],
+        value=[_bounds["lost"]["minimum"], _bounds["lost"]["maximum"]], label="사업장별 상실가입자 수 범위(명)", show_value=True, full_width=True,
+    )
     top_n_filter = mo.ui.slider(start=5, stop=25, step=1, value=12, label="차트에 표시할 업종 수", show_value=True, full_width=True)
     metric_filter = mo.ui.dropdown({"가입자 수": "subscribers", "사업장 수": "workplaces", "당월 고지금액": "billing"}, value="가입자 수", label="차트 비교 지표", full_width=True)
     mo.sidebar(
@@ -187,12 +214,54 @@ def _(metadata, mo, reset_button, source_rows):
             mo.Html('<div class="sidebar-brand"><span class="brand-symbol">연금</span><div><strong>국민연금 사업장</strong><small>공공데이터 분석</small></div></div>'),
             mo.md("### 탐색 조건"),
             period_filter, region_filter, status_filter, kind_filter, industry_filter, band_filter,
+            mo.md("#### 사업장별 수치 범위"),
+            subscriber_range, billing_range, new_range, lost_range,
+            mo.md("<small>각 슬라이더의 최댓값은 해당 값 이상을 모두 포함합니다. 범위를 바꾸면 사업장별 자료를 자동으로 불러옵니다.</small>"),
             mo.md("---"), metric_filter, top_n_filter, reset_button,
         ], gap=0.8),
         footer=mo.md("[원본 데이터 ↗](https://www.data.go.kr/data/15083277/fileData.do) · 국민연금공단"),
         width=290,
     )
-    return band_filter, industry_filter, kind_filter, metric_filter, period_filter, region_filter, status_filter, top_n_filter
+    return band_filter, billing_range, industry_filter, kind_filter, lost_range, metric_filter, new_range, period_filter, region_filter, status_filter, subscriber_range, top_n_filter
+
+
+@app.cell
+def _(analytics_metadata, billing_range, lost_range, new_range, subscriber_range):
+    _bounds = analytics_metadata["numeric_filter_bounds"]
+    _widgets = {
+        "subscribers": subscriber_range,
+        "billing": billing_range,
+        "new": new_range,
+        "lost": lost_range,
+    }
+    _names = {"subscribers":"가입자", "billing":"고지금액", "new":"신규취득", "lost":"상실"}
+    numeric_filter_clauses = []
+    numeric_filter_parameters = []
+    numeric_filter_labels = []
+    numeric_filters_active = False
+    for _column, _widget in _widgets.items():
+        _bound = _bounds[_column]
+        _low, _high = _widget.value
+        _divisor = _bound["divisor"]
+        _minimum, _maximum = _bound["minimum"], _bound["maximum"]
+        if _low > _minimum:
+            numeric_filter_clauses.append(f"{_column} >= ?")
+            numeric_filter_parameters.append(round(_low * _divisor))
+            numeric_filters_active = True
+        if _high < _maximum:
+            numeric_filter_clauses.append(f"{_column} <= ?")
+            numeric_filter_parameters.append(round(_high * _divisor))
+            numeric_filters_active = True
+        if _low > _minimum or _high < _maximum:
+            _format = (lambda value: f"{value:,.1f}") if _column == "billing" else (lambda value: f"{value:,.0f}")
+            if _low > _minimum and _high == _maximum:
+                _label = f"{_names[_column]} {_format(_low)}{_bound['unit']} 이상"
+            elif _low == _minimum:
+                _label = f"{_names[_column]} {_format(_high)}{_bound['unit']} 이하"
+            else:
+                _label = f"{_names[_column]} {_format(_low)}~{_format(_high)}{_bound['unit']}"
+            numeric_filter_labels.append(_label)
+    return numeric_filter_clauses, numeric_filter_labels, numeric_filter_parameters, numeric_filters_active
 
 
 @app.cell
@@ -272,7 +341,7 @@ def _(escape, metadata, mo, page_links):
 
 
 @app.cell
-def _(band_filter, connection, industry_filter, kind_filter, perf_counter, period_filter, query_rows, region_filter, status_filter):
+def _(analytics_loaded, band_filter, connection, industry_filter, kind_filter, numeric_filter_clauses, numeric_filter_parameters, numeric_filters_active, perf_counter, period_filter, query_rows, region_filter, status_filter):
     _started = perf_counter()
     _clauses = ["period = ?"]
     _parameters = [period_filter.value]
@@ -280,7 +349,22 @@ def _(band_filter, connection, industry_filter, kind_filter, perf_counter, perio
         if _widget.value != "전체":
             _clauses.append(f"{_column} = ?")
             _parameters.append(_widget.value)
-    connection.execute("CREATE OR REPLACE TEMP TABLE selection AS SELECT * FROM workplaces WHERE " + " AND ".join(_clauses), _parameters)
+    if numeric_filters_active and analytics_loaded:
+        _business_clauses = [*_clauses, *numeric_filter_clauses]
+        _business_parameters = [*_parameters, *numeric_filter_parameters]
+        connection.execute(
+            "CREATE OR REPLACE TEMP TABLE selection AS "
+            "SELECT period,region,status,kind,industry_code,industry,size_band,COUNT(*)::BIGINT AS workplaces,"
+            "SUM(subscribers)::BIGINT AS subscribers,SUM(billing)::BIGINT AS billing,"
+            "SUM(new)::BIGINT AS new,SUM(lost)::BIGINT AS lost FROM businesses WHERE "
+            + " AND ".join(_business_clauses)
+            + " GROUP BY period,region,status,kind,industry_code,industry,size_band",
+            _business_parameters,
+        )
+    elif numeric_filters_active:
+        connection.execute("CREATE OR REPLACE TEMP TABLE selection AS SELECT * FROM workplaces WHERE FALSE")
+    else:
+        connection.execute("CREATE OR REPLACE TEMP TABLE selection AS SELECT * FROM workplaces WHERE " + " AND ".join(_clauses), _parameters)
     metrics = ("workplaces", "subscribers", "billing", "new", "lost")
     totals = query_rows("SELECT " + ", ".join(f"CAST(COALESCE(SUM({k}),0) AS BIGINT) AS {k}" for k in metrics) + " FROM selection")[0]
     filtered_rows = query_rows("SELECT * FROM selection ORDER BY region, industry, size_band")
@@ -289,7 +373,7 @@ def _(band_filter, connection, industry_filter, kind_filter, perf_counter, perio
 
 
 @app.cell
-def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, kind_filter, get_active_tab, metadata, mo, region_filter, status_filter, totals):
+def _(analytics_error, band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, kind_filter, get_active_tab, metadata, mo, numeric_filter_labels, numeric_filters_active, numeric_retry, region_filter, status_filter, totals):
     _scopes = [
         "전국" if region_filter.value == "전체" else str(region_filter.value),
         "모든 가입 상태" if status_filter.value == "전체" else str(status_filter.value),
@@ -298,6 +382,7 @@ def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, ki
     ]
     if industry_filter.value != "전체":
         _scopes.append(f"업종 {industry_filter.value}")
+    _scopes.extend(numeric_filter_labels)
     _scope_html = "".join(f"<b>{escape(label)}</b>" for label in _scopes)
     _coverage = totals["workplaces"] / metadata["totals"]["workplaces"] * 100 if metadata["totals"]["workplaces"] else 0
     _registered = sum(row["workplaces"] for row in filtered_rows if row["status"] == "등록")
@@ -347,6 +432,11 @@ def _(band_filter, escape, filter_elapsed_ms, filtered_rows, industry_filter, ki
         ], gap=0.3)
     if get_active_tab() == "사업장 상세":
         _summary = mo.md(f"<small>전체 공개 자료 **{metadata['totals']['workplaces']:,}개 사업장**에서 이름을 검색합니다. 상세 조회는 왼쪽 탐색 조건과 별도로 유지됩니다.</small>")
+    if numeric_filters_active and analytics_error and get_active_tab() == "현황 비교":
+        _summary = mo.vstack([
+            mo.callout(analytics_error, kind="warn"),
+            numeric_retry,
+        ], gap=0.7)
     _summary
 
 
@@ -845,7 +935,7 @@ def _(analytics_loaded, business_query, business_search_count, business_search_p
 
 
 @app.cell
-def _(analytics_error, analytics_loaded, business_query, business_results, business_search, business_search_count, business_search_page, escape, mo, panel, select_business):
+def _(analytics_error, analytics_loaded, business_query, business_results, business_retry, business_search, business_search_count, business_search_page, escape, mo, panel, select_business):
     _result_items = []
     for _row in business_results:
         _record_id = int(_row["record_id"])
@@ -861,9 +951,12 @@ def _(analytics_error, analytics_loaded, business_query, business_results, busin
             mo.Html(f'<div style="font-size:11px;color:var(--analysis-muted);line-height:1.7;overflow-wrap:anywhere">{escape(_context)}<br>{escape(_row["industry"])} · {escape(_identifiers)}</div>'),
         ], gap=0.4).style({"padding":"12px","border":"1px solid var(--analysis-line)","border-radius":"9px","min-width":"0"}))
     if analytics_error:
-        _results_content = mo.callout(analytics_error, kind="warn")
+        _results_content = mo.vstack([
+            mo.callout(analytics_error, kind="warn"),
+            business_retry,
+        ], gap=0.7)
     elif not analytics_loaded:
-        _results_content = mo.callout("사업장명을 입력하고 검색하세요. 첫 검색 시 사업장 분석 자료를 한 번 불러옵니다.", kind="neutral")
+        _results_content = mo.callout("사업장별 분석 자료를 자동으로 준비하고 있습니다. 최초 1회만 내려받아 연봉 통계·검색·상세 조회에서 함께 사용합니다.", kind="neutral")
     elif not business_query:
         _results_content = mo.md("검색어를 입력하면 전체 사업장에서 이름이 일치하는 결과를 찾습니다.")
     elif not business_search_count:
@@ -970,13 +1063,20 @@ def _(alt, analytics_metadata, business_change, business_history, clear_business
 
 
 @app.cell
-def _(analytics_error, analytics_load, analytics_ready, business_detail_view, business_search_view, detail, get_active_tab, marimo_demo, mo, overview, salary_view, selected_business, set_active_tab, source_detail, sql_explorer):
+def _(analytics_error, analytics_metadata, analytics_ready, analytics_retry, business_detail_view, business_search_view, detail, get_active_tab, marimo_demo, mo, overview, salary_view, selected_business, set_active_tab, source_detail, sql_explorer):
     _business_content = business_detail_view if selected_business is not None else mo.vstack([business_search_view,business_detail_view],gap=1)
+    _load_state = mo.vstack([
+        mo.callout(analytics_error, kind="warn"),
+        analytics_retry,
+    ], gap=0.7) if analytics_error else mo.callout(
+        f"사업장별 분석 자료를 자동으로 준비하고 있습니다. 최초 1회 약 {analytics_metadata['parquet_bytes']/1_000_000:,.1f}MB를 받으며, 완료되면 통계·분포·순위를 바로 표시합니다.",
+        kind="neutral",
+    )
     _salary_content = salary_view if analytics_ready else mo.vstack([
         mo.md("## 종합 통계·추정 연봉"),
         mo.md("등록·가입자 5명 이상·고지금액 양수인 사업장의 추정 연봉, 규모별 분포와 상위 사업장을 확인합니다. 왼쪽 탐색 조건도 적용됩니다."),
-        analytics_load,
-        mo.callout(analytics_error, kind="warn") if analytics_error else mo.md("사업장별 분석 자료는 버튼을 누를 때 한 번 받습니다. 추정 연봉은 실제 연봉·실수령액과 다르며, 산출 방법을 함께 제공합니다."),
+        _load_state,
+        mo.md("추정 연봉은 실제 연봉·실수령액과 다르며, 산출 방법을 함께 제공합니다."),
     ], gap=1)
     main_tabs = mo.ui.tabs({"현황 비교":overview,"종합 통계·추정 연봉":_salary_content,"사업장 상세":_business_content,"집계 데이터":detail,"SQL 탐색":sql_explorer,"마리모 기능 체험":marimo_demo,"출처·품질":source_detail}, value=get_active_tab(), on_change=set_active_tab, lazy=True)
     main_tabs
